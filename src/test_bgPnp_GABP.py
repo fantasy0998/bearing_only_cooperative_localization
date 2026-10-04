@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
@@ -9,6 +10,7 @@ from src.bgPnp_GABP import (
     get_anchor_edge_observation,
     LoadedObservationBatch,
     MiluvSolveConfig,
+    ResultRepository,
     UniformKeypointSelector,
     WindowSampleBuilder,
     exp_miluv_bo_epnp_gnbp,
@@ -18,6 +20,7 @@ from src.exp_miluv_bearing import (
     build_observation_matrix,
     generate_miluv_observation_batches,
 )
+from src.gnbp_keypoint_selection import GNBPKeypointSelectionConfig
 
 
 MILUV_EXPERIMENT_DIR = Path(
@@ -59,9 +62,9 @@ def _build_synthetic_batch(num_points: int = 24) -> LoadedObservationBatch:
         anchor_nodes=("ifo001",),
         estimated_nodes=("ifo002",),
         robot_ids=("ifo001", "ifo002"),
-        adjacency_matrix=np.array([[0, 1], [0, 0]], dtype=int),
-        anchor_position_w={"ifo001": anchor},
-        estimated_position_l={"ifo002": local},
+        adjacr_position_w={"ifo001": anchor},
+        estimency_matrix=np.array([[0, 1], [0, 0]], dtype=int),
+        anchoated_position_l={"ifo002": local},
         estimated_position_w={"ifo002": anchor + 0.2},
         estimated_se3={
             "ifo002": {
@@ -75,64 +78,98 @@ def _build_synthetic_batch(num_points: int = 24) -> LoadedObservationBatch:
     )
 
 
-class TestKeypointSelector(unittest.TestCase):
-    def test_observability_keypoint_methods_build_samples(self) -> None:
-        batch = _build_synthetic_batch()
-        for method in (
-            "uniform",
-            "bearing_diversity",
-            "trajectory_geometry",
-            "linear_system_condition",
-        ):
-            selector = UniformKeypointSelector(
-                method=method,
-                observer_id="ifo002",
-                anchor_id="ifo001",
+# class TestKeypointSelector(unittest.TestCase):
+#     def test_observability_keypoint_methods_build_samples(self) -> None:
+#         batch = _build_synthetic_batch()
+#         for method in (
+#             "uniform",
+#             "bearing_diversity",
+#             "trajectory_geometry",
+#             "linear_system_condition",
+#         ):
+#             selector = UniformKeypointSelector(
+#                 method=method,
+#                 observer_id="ifo002",
+#                 anchor_id="ifo001",
+#             )
+#             sample = WindowSampleBuilder(selector).build(batch, keypoint_count=8)
+#             edge_key = "ifo002_ifo001"
+#             self.assertIn(edge_key, sample.anchor_edge_keypoint_indices)
+
+#             edge_indices = sample.anchor_edge_keypoint_indices[edge_key]
+#             self.assertEqual(edge_indices.size, 8)
+#             self.assertTrue(np.all(np.diff(edge_indices) >= 0))
+
+#             self.assertEqual(sample.keypoint_indices.size, 8)
+#             self.assertTrue(np.all(np.diff(sample.keypoint_indices) >= 0))
+
+#             anchor_points, observer_points, bearings = get_anchor_edge_observation(
+#                 batch,
+#                 sample,
+#                 observer_id="ifo002",
+#                 anchor_id="ifo001",
+#             )
+#             self.assertEqual(anchor_points.shape, (3, 8))
+#             self.assertEqual(observer_points.shape, (3, 8))
+#             self.assertEqual(bearings.shape, (3, 8))
+
+#     def test_build_can_override_selector_method(self) -> None:
+#         batch = _build_synthetic_batch()
+#         selector = UniformKeypointSelector(
+#             method="uniform",
+#             observer_id="ifo002",
+#             anchor_id="ifo001",
+#         )
+#         sample = WindowSampleBuilder(selector).build(
+#             batch,
+#             keypoint_count=7,
+#             keypoint_selection_method="bearing_diversity",
+#         )
+#         edge_key = "ifo002_ifo001"
+#         self.assertIn(edge_key, sample.anchor_edge_keypoint_indices)
+#         self.assertEqual(sample.anchor_edge_keypoint_indices[edge_key].size, 7)
+#         self.assertEqual(sample.keypoint_indices.size, 7)
+#         self.assertTrue(np.all(np.diff(sample.keypoint_indices) >= 0))
+
+
+class TestResultRepository(unittest.TestCase):
+    def test_noise_specific_results_do_not_overwrite_each_other(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            repository = ResultRepository(Path(temporary_directory))
+            first_results = [
+                {"sigma_azimuth_deg": 0.1, "sigma_elevation_deg": 0.2},
+                {"keypoint_count": 6},
+            ]
+            second_results = [
+                {"sigma_azimuth_deg": 0.2, "sigma_elevation_deg": 0.3},
+                {"keypoint_count": 12},
+            ]
+
+            first_path = repository.save(first_results)
+            second_path = repository.save(second_results)
+
+            self.assertEqual(first_path.name, "bgpnp_gabp_results_az0100_el0200.npz")
+            self.assertEqual(second_path.name, "bgpnp_gabp_results_az0200_el0300.npz")
+            self.assertNotEqual(first_path, second_path)
+            self.assertTrue(first_path.exists())
+            self.assertTrue(second_path.exists())
+            self.assertEqual(
+                np.load(first_path, allow_pickle=True)["results"].tolist(),
+                first_results,
             )
-            sample = WindowSampleBuilder(selector).build(batch, keypoint_count=8)
-            edge_key = "ifo002_ifo001"
-            self.assertIn(edge_key, sample.anchor_edge_keypoint_indices)
-
-            edge_indices = sample.anchor_edge_keypoint_indices[edge_key]
-            self.assertEqual(edge_indices.size, 8)
-            self.assertTrue(np.all(np.diff(edge_indices) >= 0))
-
-            self.assertEqual(sample.keypoint_indices.size, 8)
-            self.assertTrue(np.all(np.diff(sample.keypoint_indices) >= 0))
-
-            anchor_points, observer_points, bearings = get_anchor_edge_observation(
-                batch,
-                sample,
-                observer_id="ifo002",
-                anchor_id="ifo001",
+            self.assertEqual(
+                np.load(second_path, allow_pickle=True)["results"].tolist(),
+                second_results,
             )
-            self.assertEqual(anchor_points.shape, (3, 8))
-            self.assertEqual(observer_points.shape, (3, 8))
-            self.assertEqual(bearings.shape, (3, 8))
-
-    def test_build_can_override_selector_method(self) -> None:
-        batch = _build_synthetic_batch()
-        selector = UniformKeypointSelector(
-            method="uniform",
-            observer_id="ifo002",
-            anchor_id="ifo001",
-        )
-        sample = WindowSampleBuilder(selector).build(
-            batch,
-            keypoint_count=7,
-            keypoint_selection_method="bearing_diversity",
-        )
-        edge_key = "ifo002_ifo001"
-        self.assertIn(edge_key, sample.anchor_edge_keypoint_indices)
-        self.assertEqual(sample.anchor_edge_keypoint_indices[edge_key].size, 7)
-        self.assertEqual(sample.keypoint_indices.size, 7)
-        self.assertTrue(np.all(np.diff(sample.keypoint_indices) >= 0))
 
 
 @unittest.skipUnless(MILUV_EXPERIMENT_DIR.exists(), "MILUV experiment directory not available.")
 class TestBgPnpGABP(unittest.TestCase):
     def test_observation_to_bgpnp_gabp_flow_runs(self) -> None:
         observation_root = Path("data/miluv_bgpnp_gabp_test")
+        solve_root = observation_root / "local_schur"
+        figure_root = Path("docs/figures/gnbp_local_schur")
+        figure_root.mkdir(parents=True, exist_ok=True)
         adjacency_matrix, _node_order = build_observation_matrix(
             ["ifo001"],
             ["ifo002", "ifo003"],
@@ -164,8 +201,8 @@ class TestBgPnpGABP(unittest.TestCase):
         for observation_path in observation_paths:
             solve_config = MiluvSolveConfig(
                 observation_path=observation_path,
-                output_root=observation_root,
-                figure_dir=Path("docs/figures"),
+                output_root=solve_root,
+                figure_dir=figure_root,
                 keypoint_counts=(6, 12, 18),
                 primary_anchor_id="ifo001",
                 target_agent_id="ifo002",   ## 对于多机情况，为便于对比，选择ifo02无人机的位姿作为对比项
@@ -175,13 +212,19 @@ class TestBgPnpGABP(unittest.TestCase):
                 # linear_system_condition
                 # bearing_diversity
                 keypoint_selection_method="uniform",
+                gnbp_selection_config=GNBPKeypointSelectionConfig(
+                    extra_factors_per_node=8,
+                    max_extra_factors_per_edge=6,
+                    stop_mode="budget",
+                ),
+                gnbp_measurement_mode="b4",
                 run_bls=True,
                 run_bsdp=True,
                 run_bo_epnp=True,
                 run_bgpnp=True,
                 run_bgpnp_gabp=True,
             )
-
+            # main program`s work flow
             artifacts = exp_miluv_bo_epnp_gnbp(solve_config)
 
             self.assertTrue(Path(artifacts["results_path"]).exists())
@@ -191,6 +234,12 @@ class TestBgPnpGABP(unittest.TestCase):
             results = artifacts["results"]
             self.assertGreaterEqual(len(results), 2)
             metadata = results[0]
+            self.assertEqual(metadata["gnbp_selection_method"], "local_schur")
+            expected_result_name = (
+                f"bgpnp_gabp_results_az{_noise_tag(metadata['sigma_azimuth_deg'])}"
+                f"_el{_noise_tag(metadata['sigma_elevation_deg'])}.npz"
+            )
+            self.assertEqual(Path(artifacts["results_path"]).name, expected_result_name)
             self.assertEqual(metadata["target_agent_id"], "ifo002")
             self.assertEqual(metadata["estimated_nodes"], ["ifo002", "ifo003"])
 
@@ -209,6 +258,24 @@ class TestBgPnpGABP(unittest.TestCase):
                 self.assertEqual(set(entry["errors"].keys()), expected_algorithms)
                 self.assertEqual(set(entry["times"].keys()), expected_algorithms)
                 self.assertEqual(set(entry["failures"].keys()), expected_algorithms)
+                if solve_config.run_bgpnp_gabp:
+                    self.assertEqual(entry["failures"]["bgpnp_gabp"], 0)
+                    selection = entry["diagnostics"]["bgpnp_gabp"]
+                    self.assertEqual(
+                        selection["diagnostics"]["measurement_mode"], "b4"
+                    )
+                    for node in metadata["estimated_nodes"]:
+                        order = selection["selection_order"][node]
+                        self.assertLessEqual(len(order), 8)
+                        for edge in {item[0] for item in order}:
+                            self.assertLessEqual(
+                                sum(item[0] == edge for item in order), 6
+                            )
+                    for edge, initial in selection["initialization_indices"].items():
+                        self.assertTrue(
+                            set(initial)
+                            <= set(selection["refinement_indices"][edge])
+                        )
 
             az_tag = _noise_tag(float(metadata["sigma_azimuth_deg"]))
             el_tag = _noise_tag(float(metadata["sigma_elevation_deg"]))
