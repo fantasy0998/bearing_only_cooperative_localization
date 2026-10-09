@@ -231,7 +231,10 @@ class BO_EPnP:
         bw = b * W_sqrt[:, 0]
 
         Z = np.hstack([Aw, bw[:, None]])
-        _, _, vt = np.linalg.svd(Z, full_matrices=False)
+        # Six correspondences give A=(12,12), Z=(12,13). Reduced SVD omits
+        # Z's right null vector in this wide case and returns a nonzero singular
+        # direction instead, producing a spurious WTLS pose at the minimum budget.
+        _, _, vt = np.linalg.svd(Z, full_matrices=Z.shape[0] < Z.shape[1])
         v = vt[-1, :]
         denom = v[-1]
 

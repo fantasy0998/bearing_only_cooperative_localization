@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 import time
@@ -15,10 +15,6 @@ import numpy as np
 from src.miluv_to_bearing import load_three_robot_mocap
 from src.bearing_only_solver import bearing_linear_solver, bgpnp
 from src.bo_epnp_solver import BO_EPnP
-from src.gnbp_keypoint_selection import (
-    GNBPKeypointSelectionConfig,
-    select_gnbp_keypoints,
-)
 from src.multi_agent_bearing_gabp import (
     AnchorBearingFactor,
     GaBPRefinementResult,
@@ -56,16 +52,16 @@ class MiluvSolveConfig:
     sigma_prior_rotation_deg: float = 5.0
     sigma_prior_translation: float = 0.5
     keypoint_selection_method: str = "uniform"
-    gnbp_selection_config: GNBPKeypointSelectionConfig | None = None
-    gnbp_measurement_mode: str = "b4"
-    gabp_settings: GaBPSettings = GaBPSettings(
-        max_gn_iterations=8,
-        max_bp_iterations=30,
-        gn_tolerance=1e-7,
-        bp_tolerance=1e-8,
-        message_damping=0.6,
-        step_damping=1.0,
-        diagonal_regularization=1e-9,
+    gabp_settings: GaBPSettings = field(
+        default_factory=lambda: GaBPSettings(
+            max_gn_iterations=8,
+            max_bp_iterations=30,
+            gn_tolerance=1e-7,
+            bp_tolerance=1e-8,
+            message_damping=0.6,
+            step_damping=1.0,
+            diagonal_regularization=1e-9,
+        )
     )
 
     def __post_init__(self) -> None:
@@ -95,8 +91,6 @@ class LoadedObservationBatch:
     estimated_position_w: dict[str, np.ndarray]
     estimated_se3: dict[str, dict[str, np.ndarray]]
     bearing_observation: dict[str, np.ndarray]
-    bearing_observation_b4: dict[str, np.ndarray] | None = None
-    observer_rotation_b3_b4: dict[str, np.ndarray] | None = None
 
 
 @dataclass
@@ -143,7 +137,6 @@ class SolverEstimate:
     rotation: np.ndarray
     translation: np.ndarray
     runtime: float
-    diagnostics: dict[str, Any] | None = None
 
 
 class MiluvObservationReader:
@@ -216,16 +209,6 @@ class MiluvObservationReader:
                 )
                 for edge, array in observation_data["bearing_observation"].items()
             },
-            bearing_observation_b4=(
-                {edge: _normalize_bearing_sequence(_as_points_3xn(array, edge))
-                 for edge, array in observation_data["bearing_observation_b4"].items()}
-                if "bearing_observation_b4" in observation_data else None
-            ),
-            observer_rotation_b3_b4=(
-                {node: np.asarray(array, dtype=float)
-                 for node, array in observation_data["observer_rotation_b3_b4"].items()}
-                if "observer_rotation_b3_b4" in observation_data else None
-            ),
         )
 
 
@@ -417,8 +400,7 @@ class UniformKeypointSelector:
             selected.append(best_idx)
             remaining.remove(best_idx)
 
-        #return np.asarray(sorted(selected), dtype=int)
-        return np.asarray(selected, dtype=int)
+        return np.asarray(sorted(selected), dtype=int)
 
     def _bearing_diversity_score(self, bearings: np.ndarray) -> float:
         bearings = _normalize_bearing_sequence(_as_points_3xn(bearings, "bearings"))
@@ -443,66 +425,31 @@ class UniformKeypointSelector:
         local_points: np.ndarray,
         bearings: np.ndarray,
     ) -> float:
-        anchor_3xn = _as_points_3xn(
-            anchor_points,
-            "anchor_points",
+        _as_points_3xn(anchor_points, "anchor_points")
+        points = _as_points_3xn(local_points, "local_points")
+        normalized_bearings = _normalize_bearing_sequence(
+            _as_points_3xn(bearings, "bearings")
         )
-        local_3xn = _as_points_3xn(
-            local_points,
-            "local_points",
-        )
-        bearing_3xn = _normalize_bearing_sequence(
-            _as_points_3xn(
-                bearings,
-                "bearings",
-            )
-        )
-
-        anchor_n3 = anchor_3xn.T
-        local_n3 = local_3xn.T
-        bearing_n3 = bearing_3xn.T
-
-        # 控制点由锚机全局点构造
-        control_points = BO_EPnP._select_control_points(
-            anchor_n3,
-            method="pca",
-        )
-
-        # 重心坐标同样由锚机全局点计算
-        alpha_n4 = bgpnp.compute_alphas(
-            anchor_n3,
-            control_points,
-        )
-
-        # 构造实际 BO-EPnP 使用的线性系统
-        A, _ = BO_EPnP._build_sphere_aware_linear_system(
-            local_n3,
-            bearing_n3,
-            alpha_n4,
-        )
-
-        singular_values = np.linalg.svd(
-            A,
-            compute_uv=False,
-        )
-
+        matrix = self._build_bo_epnp_proxy_matrix(points, normalized_bearings)
+        singular_values = np.linalg.svd(matrix, compute_uv=False)
         if singular_values.size == 0:
             return -np.inf
+        return float(np.log(singular_values[-1] ** 2 + self.epsilon))
 
-        sigma_max = float(singular_values[0])
-        sigma_min = float(singular_values[-1])
-
-        if sigma_min <= self.epsilon:
-            return -np.inf
-
-        condition_number = sigma_max / sigma_min
-
-        return -float(
-            np.log(
-                condition_number
-                + self.epsilon
-            )
-        )
+    def _build_bo_epnp_proxy_matrix(
+        self,
+        local_points: np.ndarray,
+        bearings: np.ndarray,
+    ) -> np.ndarray:
+        control_points = _build_local_control_points(local_points, self.epsilon)
+        alpha = _compute_barycentric_coordinates(local_points, control_points)
+        rows: list[np.ndarray] = []
+        for idx in range(local_points.shape[1]):
+            bearing = bearings[:, idx]
+            projection = np.eye(3) - np.outer(bearing, bearing)
+            basis = np.kron(alpha[:, idx].reshape(1, 4), np.eye(3))
+            rows.append(projection @ basis)
+        return np.vstack(rows)
 
 
 class WindowSampleBuilder:
@@ -533,7 +480,7 @@ class WindowSampleBuilder:
                 el = np.rad2deg(np.arctan2(z, horizontal_norm))
                 meas={f"{edge_key}_az":az,
                       f"{edge_key}_el":el}
-                outputpath = Path("docs/figures/bearing_direction.png")
+                outputpath="D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\taes-bearing-only-cooperative-localization\\docs\\figures\\bearing_direction.png"
                 plot_curves(meas,outputpath)
                 anchor_edge_keypoint_indices[edge_key] = self.keypoint_selector.select(
                     window_indices,
@@ -600,14 +547,9 @@ class BgpnpGabpSolver:
         batch: LoadedObservationBatch,
         sample: MultiAgentWindowSample,
         primary_anchor_id: str,
-        prior_covariance: np.ndarray | None = None,
-        *,
-        selection_config: GNBPKeypointSelectionConfig | None = None,
-        measurement_mode: str = "b4",
+        prior_covariance: np.ndarray,
     ) -> tuple[dict[str, SolverEstimate], GaBPRefinementResult]:
         """Initialize all estimated nodes with BGPnP and refine them jointly with GABP."""
-        if selection_config is not None and prior_covariance is not None:
-            raise ValueError("Local Schur selection requires prior_covariance=None.")
         initial_estimates: dict[str, SolverEstimate] = {}
         initial_states: dict[str, PoseState] = {}
 
@@ -636,18 +578,9 @@ class BgpnpGabpSolver:
                 rotation=estimate.rotation.copy(),
                 translation=estimate.translation.copy(),
             )
-        selection = None
-        if selection_config is None:
-            sample_keypoint = get_pairwise_observation_by_union(batch, sample)
-            anchor_factors = self._build_anchor_factors(sample_keypoint, primary_anchor_id)
-            pairwise_factors = self._build_pairwise_factors(sample_keypoint)
-        else:  # select key points for gnbp here
-            selection = select_gnbp_keypoints(
-                batch, sample, initial_states,
-                config=selection_config, measurement_mode=measurement_mode,
-            )
-            anchor_factors = selection.anchor_factors
-            pairwise_factors = selection.pairwise_factors
+        sample_keypoint = get_pairwise_observation_by_union(batch, sample)
+        anchor_factors = self._build_anchor_factors(sample_keypoint, primary_anchor_id)
+        pairwise_factors = self._build_pairwise_factors(sample_keypoint)
         refinement = refine_with_gabp(
             initial_states=initial_states,
             anchor_factors=anchor_factors,
@@ -656,8 +589,6 @@ class BgpnpGabpSolver:
             prior_covariance=prior_covariance,
             settings=self.settings,
         )
-        if selection is not None:
-            refinement.selection_metadata = selection.to_metadata()
         return initial_estimates, refinement
 
     @staticmethod
@@ -744,11 +675,6 @@ class MiluvSolveEvaluator:
                 "keypoint_counts": list(self.config.keypoint_counts),
                 "target_agent_id": self.config.target_agent_id,
                 "estimated_nodes": list(batch.estimated_nodes),
-                "gnbp_selection_method": (
-                    "local_schur"
-                    if self.config.gnbp_selection_config is not None
-                    else "legacy_union"
-                ),
             }
         ]
 
@@ -782,7 +708,6 @@ class MiluvSolveEvaluator:
 
             if sample_for_plot is None:
                 sample_for_plot = sample_a
-            # alll method excute here
             entry = self._evaluate_sample(batch, sample_a)
             results.append(entry)
 
@@ -832,8 +757,6 @@ class MiluvSolveEvaluator:
             try:
                 estimate = solver(batch,sample)
                 entry["times"][algorithm_name] = estimate.runtime
-                if estimate.diagnostics is not None:
-                    entry.setdefault("diagnostics", {})[algorithm_name] = estimate.diagnostics
                 entry["errors"][algorithm_name] = _pose_error(
                     estimate.rotation,
                     estimate.translation,
@@ -886,52 +809,22 @@ class MiluvSolveEvaluator:
         )
 
     def _solve_bgpnp_gabp(self, batch: LoadedObservationBatch,sample: MultiAgentWindowSample) -> SolverEstimate:
-        covariance = None
-        if self.config.gnbp_selection_config is None:
-            covariance = _build_prior_covariance(
-                sigma_rotation_deg=self.config.sigma_prior_rotation_deg,
-                sigma_translation=self.config.sigma_prior_translation,
-            )
+        covariance = _build_prior_covariance(
+            sigma_rotation_deg=self.config.sigma_prior_rotation_deg,
+            sigma_translation=self.config.sigma_prior_translation,
+        )
         start_time = time.perf_counter()
-        initial_estimates, refinement = self.gabp_solver.solve(
+        _initial_estimates, refinement = self.gabp_solver.solve(
             batch,
             sample,
             primary_anchor_id=self.config.primary_anchor_id,
             prior_covariance=covariance,
-            selection_config=self.config.gnbp_selection_config,
-            measurement_mode=self.config.gnbp_measurement_mode,
         )
         state = refinement.states[self.config.target_agent_id]
-        diagnostics = dict(refinement.selection_metadata or {})
-        diagnostics.update({
-            "initializer": "bgpnp",
-            "pose_convention": "p_local = R_world_to_local @ p_world + t_world_to_local",
-            "poses": {
-                node: {
-                    "initial": {
-                        "R_world_to_local": initial_estimates[node].rotation.copy(),
-                        "t_world_to_local": initial_estimates[node].translation.copy(),
-                    },
-                    "final": {
-                        "R_world_to_local": refined.rotation.copy(),
-                        "t_world_to_local": refined.translation.copy(),
-                    },
-                } for node, refined in refinement.states.items()
-            },
-            "factor_counts": refinement.factor_counts,
-            "refinement": {
-                "history": [asdict(entry) for entry in refinement.history],
-                "history_residual_evaluation": "before_update",
-                "initial_residual_norm": refinement.initial_residual_norm,
-                "final_residual_norm": refinement.final_residual_norm,
-                "stop_reason": refinement.stop_reason,
-            },
-        })
         return SolverEstimate(
             rotation=state.rotation.copy(),
             translation=state.translation.copy(),
             runtime=float(time.perf_counter() - start_time),
-            diagnostics=diagnostics,
         )
 
     def _plot_keypoints_3d(
@@ -1037,42 +930,19 @@ class ResultRepository:
         self.results_dir = output_root / "results"
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
-    def result_path_for_noise(
-        self,
-        sigma_azimuth_deg: float,
-        sigma_elevation_deg: float,
-    ) -> Path:
-        """Return a result path unique to one azimuth/elevation noise pair."""
-        az_tag = _noise_tag(float(sigma_azimuth_deg))
-        el_tag = _noise_tag(float(sigma_elevation_deg))
-        return self.results_dir / f"bgpnp_gabp_results_az{az_tag}_el{el_tag}.npz"
+    @property
+    def results_path(self) -> Path:
+        return self.results_dir / "bgpnp_gabp_results.npz"
 
     def save(self, results: list[dict[str, Any]]) -> Path:
-        """Save results to a noise-specific NPZ file."""
-        if not results:
-            raise ValueError("results must include a metadata entry.")
-        metadata = results[0]
-        try:
-            sigma_azimuth_deg = float(metadata["sigma_azimuth_deg"])
-            sigma_elevation_deg = float(metadata["sigma_elevation_deg"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError(
-                "Result metadata must contain numeric sigma_azimuth_deg and "
-                "sigma_elevation_deg values."
-            ) from exc
-
-        results_path = self.result_path_for_noise(
-            sigma_azimuth_deg,
-            sigma_elevation_deg,
-        )
-        np.savez_compressed(results_path, results=np.array(results, dtype=object))
-        return results_path
+        """Save results to NPZ."""
+        np.savez_compressed(self.results_path, results=np.array(results, dtype=object))
+        return self.results_path
 
 
 def exp_miluv_bo_epnp_gnbp(config: MiluvSolveConfig) -> dict[str, Any]:
     """Run the MILUV observation -> BO-EPnP/GABP solve flow."""
     evaluator = MiluvSolveEvaluator(config)
-    # solver are collected here
     results, figure_paths = evaluator.run()
     repository = ResultRepository(config.output_root)
     results_path = repository.save(results)

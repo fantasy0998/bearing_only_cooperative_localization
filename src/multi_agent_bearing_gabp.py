@@ -129,11 +129,6 @@ class GaBPRefinementResult:
 
     states: dict[str, PoseState]
     history: list[GaBPHistoryEntry] = field(default_factory=list)
-    selection_metadata: dict[str, object] | None = None
-    stop_reason: str = "unknown"
-    initial_residual_norm: float | None = None
-    final_residual_norm: float | None = None
-    factor_counts: dict[str, object] = field(default_factory=dict)
 
 
 def refine_with_gabp(
@@ -165,7 +160,6 @@ def refine_with_gabp(
     pairwise_factor_list = list(pairwise_factors)
     priors = prior_states if prior_states is not None else initial_states
     history: list[GaBPHistoryEntry] = []
-    stop_reason = "max_gn_iterations"
 
     for iteration in range(cfg.max_gn_iterations):
         unary_info = _linearize_unary_factors(anchor_factor_list, states)
@@ -210,30 +204,9 @@ def refine_with_gabp(
         )
 
         if max_increment_norm < cfg.gn_tolerance:
-            stop_reason = "gn_increment_tolerance"
             break
 
-    final_unary = _linearize_unary_factors(anchor_factor_list, states)
-    if prior_covariance is not None:
-        final_unary.extend(_build_prior_info_factors(priors, states, prior_covariance))
-    final_pairwise = _linearize_pairwise_factors(pairwise_factor_list, states)
-    final_residual = float(np.sqrt(sum(f.residual_norm**2 for f in final_unary)
-                                   + sum(f.residual_norm**2 for f in final_pairwise)))
-    return GaBPRefinementResult(
-        states=states, history=history, stop_reason=stop_reason,
-        initial_residual_norm=history[0].residual_norm if history else final_residual,
-        final_residual_norm=final_residual,
-        factor_counts={
-            "anchor": len(anchor_factor_list), "pairwise": len(pairwise_factor_list),
-            "observation_total": len(anchor_factor_list) + len(pairwise_factor_list),
-            "by_observer": {
-                node: {
-                    "anchor": sum(f.observer_id == node for f in anchor_factor_list),
-                    "pairwise_outgoing": sum(f.observer_id == node for f in pairwise_factor_list),
-                } for node in states
-            },
-        },
-    )
+    return GaBPRefinementResult(states=states, history=history)
 
 
 def solve_linearized_gabp(
@@ -426,20 +399,6 @@ def wrap_to_pi(angle: np.ndarray | float) -> np.ndarray | float:
     return (angle + np.pi) % (2.0 * np.pi) - np.pi
 
 # 输入是观测因子factors和初始位姿状态staes
-def linearize_anchor_factor(
-    factor: AnchorBearingFactor, states: dict[str, PoseState]
-) -> UnaryInfoFactor:
-    """Return whitened anchor information at the supplied fixed pose states."""
-    return _linearize_anchor_factor(factor, states)
-
-
-def linearize_pairwise_factor(
-    factor: PairwiseBearingFactor, states: dict[str, PoseState]
-) -> PairwiseInfoFactor:
-    """Return whitened pairwise information at the supplied fixed pose states."""
-    return _linearize_pairwise_factor(factor, states)
-
-
 def _linearize_unary_factors(
     factors: list[AnchorBearingFactor], states: dict[str, PoseState]
 ) -> list[UnaryInfoFactor]:

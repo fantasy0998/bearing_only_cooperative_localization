@@ -1,5 +1,5 @@
 import numpy as np
-from src.load_data import angle2dcm
+from load_data import angle2dcm
 
 # Test case 1: Check if the function returns a 3x3 numpy matrix
 yaw = 0.1

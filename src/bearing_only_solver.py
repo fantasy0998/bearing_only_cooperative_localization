@@ -645,64 +645,26 @@ class bearing_linear_solver():
         logger.debug(X.value)
         sol = X.value
 
-        # # Perform SVD on the solution matrix
-        # U, S, Vt = np.linalg.svd(sol)
+        # Perform SVD on the solution matrix
+        U, S, Vt = np.linalg.svd(sol)
 
-        # # Keep only the largest singular value
-        # S_rank1 = np.zeros_like(S)
-        # S_rank1[0] = S[0]
+        # Keep only the largest singular value
+        S_rank1 = np.zeros_like(S)
+        S_rank1[0] = S[0]
 
-        # # Construct the rank-1 approximation
-        # sol_rank1 = U[:, 0:1] @ np.diag(S_rank1[0:1]) @ Vt[0:1, :]
+        # Construct the rank-1 approximation
+        sol_rank1 = U[:, 0:1] @ np.diag(S_rank1[0:1]) @ Vt[0:1, :]
 
-        # # Log the rank-1 approximation
-        # logger.debug("Rank-1 approximation of the solution X is")
-        # logger.debug(sol_rank1)
+        # Log the rank-1 approximation
+        logger.debug("Rank-1 approximation of the solution X is")
+        logger.debug(sol_rank1)
 
-        # xsol = np.sqrt(np.diag(sol_rank1))
+        xsol = np.sqrt(np.diag(sol_rank1))
 
-        # R = xsol[:9].reshape(3, 3)
-        # t = xsol[9:-1]
-        # R = bearing_linear_solver.orthogonal_procrustes(R)
-        # logger.debug(f'Solution xsol: {xsol}')
-
-
-        sol_symmetric = 0.5 * (sol + sol.T)
-
-        # Since sol is theoretically symmetric positive semidefinite,
-        # use eigenvalue decomposition instead of a general SVD.
-        eigenvalues, eigenvectors = np.linalg.eigh(sol_symmetric)
-
-        # np.linalg.eigh returns eigenvalues in ascending order.
-        lambda_max = float(eigenvalues[-1])
-        z = eigenvectors[:, -1].copy()
-
-        if lambda_max < -1e-8:
-            raise RuntimeError(
-                f"SDP solution is not positive semidefinite: "
-                f"largest eigenvalue={lambda_max:.6e}"
-            )
-        # Include the scale of the rank-1 approximation.
-        z *= np.sqrt(max(lambda_max, 0.0))
-
-        # The lifted variable is z = [psi; -1].
-        # Remove the homogeneous scale and force the last element to -1.
-        homogeneous_value = float(z[-1])
-        if abs(homogeneous_value) < 1e-10:
-            raise RuntimeError(
-                "Cannot recover SDP pose because the homogeneous component is near zero."
-            )
-
-        psi = -z[:-1] / homogeneous_value
-
-        R_raw = psi[:9].reshape(3, 3)
-        t = psi[9:12]
-
-        R = bearing_linear_solver.orthogonal_procrustes(R_raw)
-
-        logger.debug("Largest SDP eigenvalue: %.6e", lambda_max)
-        logger.debug("Recovered homogeneous vector: %s", z)
-        logger.debug("Recovered pose vector: %s", psi)
+        R = xsol[:9].reshape(3, 3)
+        t = xsol[9:-1]
+        R = bearing_linear_solver.orthogonal_procrustes(R)
+        logger.debug(f'Solution xsol: {xsol}')
 
         return R, t
 

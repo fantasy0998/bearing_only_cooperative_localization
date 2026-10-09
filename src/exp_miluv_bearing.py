@@ -275,16 +275,6 @@ class MiluvObservationGenerator:
             "anchor_position_w": anchor_position_w,
             "estimated_position_l": estimated_position_l,
             "bearing_observation": bearing_observation,
-            "bearing_observation_b4": {
-                edge.replace("<-", "_"): np.asarray(value["bearing_b4"], dtype=float)
-                for edge, value in observations.items()
-            },
-            "observer_rotation_b3_b4": {
-                edge.split("<-")[0]: np.asarray(value["rotation_b3_b4"], dtype=float)
-                for edge, value in observations.items()
-            },
-            "bearing_reference_index": 0,
-            "observation_schema_version": 2,
         }
         reference_data = {
             "estimated_position_w": estimated_position_w,

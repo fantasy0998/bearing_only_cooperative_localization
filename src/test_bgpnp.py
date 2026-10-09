@@ -2,7 +2,7 @@ import unittest
 
 class TestBGPNP(unittest.TestCase):
     def test_bgpnp(self):
-        from src.bearing_only_solver import bgpnp
+        from bearing_only_solver import bgpnp
         import numpy as np
 
         # Test case 1
@@ -114,11 +114,7 @@ class TestBGPNP(unittest.TestCase):
 
     # Test case 2
     def test_bgpnp_simulation_data(self):
-        from src.bearing_only_solver import (
-            bearing_linear_solver,
-            bgpnp,
-            load_simulation_data,
-        )
+        from bearing_only_solver import bgpnp, bearing_linear_solver, load_simulation_data
         import numpy as np
         import os
         import logging

@@ -12,12 +12,15 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from src.bearing_segmentation import (
+    BearingSegmentationConfig, segment_bearings_buchin, supplement_segment_candidates,
+)
 from src.multi_agent_bearing_gabp import (
     AnchorBearingFactor,
     PairwiseBearingFactor,
     PoseState,
-    linearize_anchor_factor,
-    linearize_pairwise_factor,
+    _linearize_anchor_factor as linearize_anchor_factor,
+    _linearize_pairwise_factor as linearize_pairwise_factor,
     vector_to_az_el,
 )
 
@@ -53,7 +56,11 @@ class GNBPKeypointSelectionConfig:
     candidate_scope: str = "full_window"
     max_total_factors_per_node: int | None = None
 
+    bearing_segmentation: BearingSegmentationConfig | None = None
+
     def __post_init__(self) -> None:
+        if self.bearing_segmentation is not None and self.candidate_policy != "pairwise_only":
+            raise ValueError("Bearing segmentation supports only pairwise_only.")
         if self.candidate_policy not in ("anchors_and_pairwise", "pairwise_only"):
             raise ValueError("Unknown candidate_policy.")
         if self.candidate_scope not in ("full_window", "anchor_union"):
@@ -180,10 +187,11 @@ def select_gnbp_keypoints(
     """
     started = time.perf_counter()
     cfg = config or GNBPKeypointSelectionConfig()
-    states, window, retained, atoms, rejected = _prepare_atoms(
+    states, window, retained, atoms, rejected, preparation = _prepare_atoms(
         batch, sample, initial_states, cfg, measurement_mode
     )
 
+    greedy_started = time.perf_counter()
     # The sole snapshot: compute every node's anchor-only base before any selection.
     base = {node: np.zeros((6, 6)) for node in states}
     for key in sorted(retained):
@@ -215,7 +223,13 @@ def select_gnbp_keypoints(
         orders[node] = tuple(order)
         node_diagnostics[node] = diagnostics
 
+    preparation["greedy_seconds"] = time.perf_counter() - greedy_started
+    if preparation["bearing_segmentation"]["enabled"]:
+        preparation["bearing_segmentation"]["selection_by_observer"] = node_diagnostics
+        preparation["bearing_segmentation"]["greedy_trial_score_count"] = sum(
+            d["trial_score_count"] for d in node_diagnostics.values())
     return _pack_result(sample, selected, atoms, orders, {
+        **preparation,
         "method": "local_schur", "measurement_mode": measurement_mode,
         "prior_mode": "none", "translation_scale": cfg.translation_scale,
         "config": asdict(cfg), "budget_scope": "observer",
@@ -241,7 +255,9 @@ def build_gnbp_candidate_factors(
     """
     started = time.perf_counter()
     cfg = config or GNBPKeypointSelectionConfig(candidate_policy="pairwise_only")
-    states, window, retained, atoms, rejected = _prepare_atoms(
+    if cfg.bearing_segmentation is not None:
+        raise ValueError("The all-candidate baseline must not enable bearing segmentation.")
+    states, window, retained, atoms, rejected, preparation = _prepare_atoms(
         batch, sample, initial_states, cfg, measurement_mode
     )
     orders = {
@@ -250,6 +266,7 @@ def build_gnbp_candidate_factors(
         for node in states
     }
     return _pack_result(sample, set(atoms), atoms, orders, {
+        **preparation, "greedy_seconds": 0.0,
         "method": "all_candidates", "measurement_mode": measurement_mode,
         "prior_mode": "none", "config": asdict(cfg),
         "budget_scope": "observer", "budgets_applied": False,
@@ -258,28 +275,130 @@ def build_gnbp_candidate_factors(
     })
 
 
+def _prefilter_bearing_candidates(batch, states, retained, edges, candidate_times, cfg, mode):
+    """Convert measured directions to frozen B3 and compress each directed edge."""
+    scfg = cfg.bearing_segmentation
+    max_angle_rad = np.deg2rad(scfg.max_angle_deg)
+    diagnostics = {"enabled": True, "criterion": "maximum_pairwise_3d_angular_diameter",
+                   "config": asdict(scfg), "frame": "b3_frozen_from_b4" if mode == "b4" else "b3_frozen",
+                   "edges": {}, "observers": {}, "invalid_inputs": []}
+    keep_by_edge = {}
+    times = np.array(sorted(candidate_times), dtype=int)
+    observations = batch.bearing_observation_b4 if mode == "b4" else batch.bearing_observation
+    for observer in sorted(states):
+        anchors = sum(key.observer_id == observer for key in retained)
+        budget = cfg.extra_factors_per_node if cfg.max_total_factors_per_node is None else cfg.max_total_factors_per_node - anchors
+        if budget < 0:
+            raise ValueError(f"Total budget below retained anchor count for {observer}.")
+        segments_by_edge = {}
+        for i, target in edges:
+            if i != observer or target not in states:
+                continue
+            edge = f"{i}_{target}"
+            info = {"raw_scope_candidate_count": len(times), "valid_input_candidates": 0,
+                    "segments": [], "invalid_inputs": [], "fast_check_count": 0,
+                    "fast_accept_count": 0, "exact_pair_comparisons": 0}
+            diagnostics["edges"][edge] = info
+            if budget == 0:
+                info["skipped_reason"] = "zero_extra_budget"
+                segments_by_edge[edge] = ()
+                continue
+            b = np.asarray(observations[edge][:, times], dtype=float)
+            norms = np.linalg.norm(b, axis=0)
+            valid_b = np.all(np.isfinite(b), axis=0) & np.isfinite(norms) & (norms >= 1e-12)
+            valid_q = np.ones(len(times), dtype=bool)
+            if mode == "b4":
+                q = np.asarray(batch.observer_rotation_b3_b4[observer][times], dtype=float)
+                # Match _build_atom's E=Q.T orthogonality check and tolerances.
+                finite_q = np.all(np.isfinite(q), axis=(1, 2))
+                valid_q = finite_q.copy()
+                if np.any(finite_q):
+                    good_q = q[finite_q]
+                    valid_q[finite_q] = (np.all(np.isclose(good_q @ good_q.transpose(0, 2, 1), np.eye(3), atol=1e-7), axis=(1, 2))
+                                        & np.isclose(np.linalg.det(good_q), 1.0, atol=1e-7))
+                b = np.einsum("nij,jn->in", q, b)
+            ts = np.asarray(batch.timestamps)[times]
+            valid_t = np.isfinite(ts)
+            valid = valid_b & valid_q & valid_t
+            for pos in np.flatnonzero(~valid):
+                reason = 'invalid_bearing' if not valid_b[pos] else ('invalid_rotation' if not valid_q[pos] else 'invalid_timestamp')
+                invalid = {"edge": edge, "index": int(times[pos]), "reason": reason}
+                info["invalid_inputs"].append(invalid)
+                diagnostics["invalid_inputs"].append(invalid)
+            info["valid_input_candidates"] = int(valid.sum())
+            starts = np.flatnonzero(valid & ~np.r_[False, valid[:-1]])
+            stops = np.flatnonzero(valid & ~np.r_[valid[1:], False]) + 1
+            segments = []
+            for start, stop in zip(starts, stops):
+                result = segment_bearings_buchin(b[:, start:stop], times[start:stop], ts[start:stop],
+                    max_angle_rad=max_angle_rad, max_time_gap_s=scfg.max_time_gap_s)
+                for name in ('fast_check_count', 'fast_accept_count', 'exact_pair_comparisons'):
+                    info[name] += getattr(result, name)
+                for sid, (segment, reason) in enumerate(zip(result.segments, result.split_reasons)):
+                    if sid == 0 and start > 0:
+                        reason = 'invalid_input_break'
+                    info["segments"].append({"indices": segment.tolist(), "start_index": int(segment[0]),
+                        "end_index": int(segment[-1]), "length": len(segment), "start_reason": reason})
+                    segments.append(segment)
+            segments_by_edge[edge] = tuple(segments)
+        valid_count = sum(diagnostics["edges"][edge]["valid_input_candidates"] for edge in segments_by_edge)
+        floor = min(valid_count, int(np.ceil(scfg.candidate_multiplier * budget)))
+        keep, representatives, added = supplement_segment_candidates(segments_by_edge,
+            per_segment=scfg.representatives_per_segment, minimum_count=floor,
+            timestamps=np.asarray(batch.timestamps))
+        keep_by_edge.update({edge: set(values.tolist()) for edge, values in keep.items()})
+        kept_count = sum(map(len, keep.values()))
+        diagnostics["observers"][observer] = {"retained_anchor_count": anchors,
+            "extra_budget": budget, "candidate_floor": floor, "valid_input_candidates": valid_count,
+            "kept_prefilter": kept_count, "candidate_reduction": 1-kept_count/valid_count if valid_count else None}
+        for edge in segments_by_edge:
+            info = diagnostics["edges"][edge]
+            info["initial_representatives"] = {sid: values.tolist() for sid, values in representatives[edge].items()}
+            info["budget_supplement_indices"] = added[edge]
+            info["keep_indices"] = keep[edge].tolist()
+            info["kept_prefilter"] = len(keep[edge])
+            count = info["valid_input_candidates"]
+            info["candidate_reduction"] = 1-len(keep[edge])/count if count else None
+    return keep_by_edge, diagnostics
+
+
 def _prepare_atoms(batch, sample, initial_states, cfg, mode):
     states, window, retained, edges = _validate_inputs(batch, sample, initial_states, mode)
     candidate_times = (set(key.time_index for key in retained)
                        if cfg.candidate_scope == "anchor_union" else set(window.tolist()))
+    started = time.perf_counter()
+    keep, segmentation = None, {"enabled": False}
+    if cfg.bearing_segmentation is not None:
+        keep, segmentation = _prefilter_bearing_candidates(batch, states, retained, edges, candidate_times, cfg, mode)
+    preparation = {"bearing_segmentation": segmentation,
+                   "segmentation_and_representatives_seconds": time.perf_counter()-started if keep is not None else 0.0}
+    started = time.perf_counter()
     scale = np.diag([1.0] * 3 + [cfg.translation_scale] * 3)
     atoms, rejected = {}, []
+    attempts = valid_optional = 0
     for observer, target in edges:
         for index in window:
             key = EdgeTimeKey(observer, target, int(index))
             if key not in retained and (
                 index not in candidate_times
                 or (cfg.candidate_policy == "pairwise_only" and target not in states)
+                or (keep is not None and index not in keep.get(key.edge_key, set()))
             ):
                 continue
+            attempts += int(key not in retained)
             try:
                 atoms[key] = _build_atom(batch, key, states, scale, cfg, mode)
+                valid_optional += int(key not in retained)
             except ValueError as exc:
                 if key in retained:
                     raise ValueError(f"Invalid retained observation {key}: {exc}") from exc
                 rejected.append({"edge": key.edge_key, "index": key.time_index,
                                  "reason": str(exc)})
-    return states, window, retained, atoms, rejected
+    preparation.update(atom_construction_seconds=time.perf_counter()-started,
+                       optional_atom_construction_count=attempts, valid_optional_atom_count=valid_optional)
+    if keep is not None:
+        segmentation.update(optional_atom_construction_count=attempts, valid_optional_atom_count=valid_optional)
+    return states, window, retained, atoms, rejected, preparation
 
 
 def _pack_result(sample, selected, atoms, orders, diagnostics):
@@ -460,7 +579,7 @@ def _psd(matrix, cfg):
 def _schur(self_block, cross, neighbor, cfg):
     marginal = self_block.copy()
     pseudoinverse_used = False
-    for node, block in cross.items():
+    for node, block in sorted(cross.items()):
         if not np.any(block):
             continue
         matrix, values, vectors, tolerance = _psd(neighbor[node], cfg)
@@ -504,7 +623,7 @@ def _metrics(matrix, rank_tolerance, cfg):
 
 
 def _select_local(node, candidates, retained, base, cfg):
-    neighbors = {atom.key.target_id for atom in candidates if atom.ij is not None}
+    neighbors = sorted({atom.key.target_id for atom in candidates if atom.ij is not None})
     self_block = base[node].copy()
     cross = {target: np.zeros((6, 6)) for target in neighbors}
     neighbor = {target: base[target].copy() for target in neighbors}
@@ -516,6 +635,7 @@ def _select_local(node, candidates, retained, base, cfg):
     history = []
     edge_counts: dict[str, int] = {}
     active = set(retained)
+    trial_score_count = 0
     stop = "budget_exhausted"
     for _ in range(cfg.extra_factors_per_node):
         reached = (metrics["rank"] == 6 and cfg.information_threshold is not None
@@ -536,6 +656,7 @@ def _select_local(node, candidates, retained, base, cfg):
                    and abs(old.time_index - key.time_index) < cfg.minimum_index_separation
                    for old in active):
                 continue
+            trial_score_count += 1
             blocks = _add_atom(self_block, cross, neighbor, atom)
             trial, trial_pinv = _schur(*blocks, cfg)
             trial_metrics = _metrics(trial, rank_tolerance, cfg)
@@ -566,6 +687,7 @@ def _select_local(node, candidates, retained, base, cfg):
         history.append({"edge": atom.key.edge_key, "index": atom.key.time_index,
                         "mode": mode, "score": tuple(float(x) for x in score), **metrics})
     return selected, {
+        "trial_score_count": trial_score_count,
         "initial": initial_metrics, "final": metrics, "history": history,
         "stop_reason": stop, "selected_extra_count": len(selected),
         "used_pseudoinverse": used_pinv, "rank_tolerance": rank_tolerance,
