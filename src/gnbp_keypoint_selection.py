@@ -11,6 +11,7 @@ import time
 from typing import TYPE_CHECKING
 
 import numpy as np
+from src.selection_trace import capture
 
 from src.bearing_segmentation import (
     BearingSegmentationConfig, segment_bearings_buchin, supplement_segment_candidates,
@@ -622,7 +623,7 @@ def _metrics(matrix, rank_tolerance, cfg):
     }
 
 
-def _select_local(node, candidates, retained, base, cfg):
+def _select_local(node, candidates, retained, base, cfg, *, trace_sink=None):
     neighbors = sorted({atom.key.target_id for atom in candidates if atom.ij is not None})
     self_block = base[node].copy()
     cross = {target: np.zeros((6, 6)) for target in neighbors}
@@ -631,6 +632,7 @@ def _select_local(node, candidates, retained, base, cfg):
     rank_tolerance = max(cfg.rank_atol, cfg.rank_rtol * max(1.0, np.linalg.norm(current, 2)))
     initial_metrics = _metrics(current, rank_tolerance, cfg)
     metrics = initial_metrics.copy()
+    capture(trace_sink, "pairwise", None, {}, initial_metrics)
     selected = []
     history = []
     edge_counts: dict[str, int] = {}
@@ -678,6 +680,8 @@ def _select_local(node, candidates, retained, base, cfg):
         if not useful:
             stop = "no_information_gain"
             break
+        capture(trace_sink, "pairwise", atom.key, metrics, updated,
+                winner=score, mode=mode)
         self_block, cross, neighbor = blocks
         current, metrics = trial, updated
         used_pinv |= trial_pinv

@@ -1,0 +1,148 @@
+{
+  "schema_version": "plot_collection_r5",
+  "config_kind": "experiment_suite",
+  "base_algorithm_config": "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\configs\\node_gnbp_plot\\base_node_gnbp.json",
+  "base_policy": "preserve_all_existing_values_except_explicit_semantic_overrides",
+  "algorithm_adapter": "config_adapter_contract.json",
+  "export_config": "export_plot_data_r5.json",
+  "input_policy": "use_collection_plan",
+  "deduplicate_physical_runs": true,
+  "suite_id": "method_budget_accuracy",
+  "purpose": "New from r3: F3b method accuracy lines for KA=6/12/18 at KP=4; share compatible BO records with F5",
+  "experiments": [
+    {
+      "config_id": "bo_ka6_kp4",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 6,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F3b.initial",
+        "F3b.final",
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka12_kp4",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F3b.initial",
+        "F3b.final",
+        "F3a.final.KP4",
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka18_kp4",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 18,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F3b.initial",
+        "F3b.final"
+      ]
+    },
+    {
+      "config_id": "bg_ka6_kp4",
+      "solver_semantics": {
+        "frontend": "bgpnp",
+        "anchor_budget": 6,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F3b.initial"
+      ]
+    },
+    {
+      "config_id": "bg_ka12_kp4",
+      "solver_semantics": {
+        "frontend": "bgpnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F3b.initial"
+      ]
+    },
+    {
+      "config_id": "bg_ka18_kp4",
+      "solver_semantics": {
+        "frontend": "bgpnp",
+        "anchor_budget": 18,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F3b.initial"
+      ]
+    },
+    {
+      "config_id": "sdp_ka6_kp4",
+      "solver_semantics": {
+        "frontend": "sdp",
+        "anchor_budget": 6,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F3b.initial"
+      ]
+    },
+    {
+      "config_id": "sdp_ka12_kp4",
+      "solver_semantics": {
+        "frontend": "sdp",
+        "anchor_budget": 12,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F3b.initial"
+      ]
+    },
+    {
+      "config_id": "sdp_ka18_kp4",
+      "solver_semantics": {
+        "frontend": "sdp",
+        "anchor_budget": 18,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F3b.initial"
+      ]
+    }
+  ],
+  "implementation_baseline": "r3",
+  "revision": "r5_from_r3_2026-10-14"
+}

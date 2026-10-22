@@ -1,0 +1,412 @@
+{
+  "schema_version": "plot_config_r5",
+  "results_roots": [
+    "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\data\\node_gnbp_plot_data\\r5\\20261016T023723_108147Z\\runs"
+  ],
+  "output_dir": "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\figures\\node_gnbp\\r5\\20261016T023723_108147Z",
+  "strict": true,
+  "graph_ids": "all_separate",
+  "figure_order": [
+    "F1",
+    "F2",
+    "F3a",
+    "F3b",
+    "F4",
+    "F5"
+  ],
+  "diagnostics": {
+    "plot_nodes": "all",
+    "plot_edges": "all",
+    "edge_scope": "owned",
+    "axes_mode": "stacked",
+    "unwrap_azimuth": true,
+    "break_at_missing": true,
+    "max_edges_per_page": 4,
+    "example": {
+      "selection": "explicit",
+      "noise_level_id": "noise_1",
+      "noise_realization_id": "r00",
+      "window_start": 0,
+      "trial_id": 0,
+      "base_sequence_id": "sequence_01"
+    }
+  },
+  "metrics": {
+    "plot_nodes": "all",
+    "node_mode": "aggregate",
+    "aggregate_function": "root_mean_square_of_node_errors",
+    "require_complete_node_set": true,
+    "error_units": {
+      "translation": "m",
+      "rotation": "deg"
+    },
+    "noise_order": [
+      "noise_1",
+      "noise_2",
+      "noise_3"
+    ],
+    "noise_levels": "all",
+    "deduplicate_timing_repeats_for_accuracy": true,
+    "failure_policy": "report_coverage_keep_missing",
+    "show_optional_common_success_cohort": false,
+    "log_display_floor": {
+      "translation_m": 1e-09,
+      "rotation_deg": 1e-09
+    },
+    "confidence_bands": false
+  },
+  "figures": {
+    "segmentation": {
+      "id": "F1",
+      "enabled": true,
+      "source": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 6,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "show_selected": false,
+      "show_representatives": false
+    },
+    "stage_selection": {
+      "id": "F2",
+      "enabled": true,
+      "source": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 6,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "stages": [
+        "anchor",
+        "pairwise"
+      ],
+      "show_selection_order": true,
+      "order_scope": "node_stage",
+      "order_source": "actual_selection_events",
+      "show_score_after": true,
+      "annotate_score_values": false,
+      "score_value_format": ".3g",
+      "score_mode": "actual_algorithm_score",
+      "show_rank": true,
+      "score_y_scale": "linear",
+      "show_baseline": true,
+      "optional_gain_panels": [],
+      "incomparable_gain_policy": "skip_with_reason",
+      "batch_event_policy": "show_batch_without_invented_internal_order",
+      "show_candidates": false,
+      "show_segment_boundaries": true,
+      "export_order_table": true,
+      "max_numeric_labels": 0,
+      "score_plot_kind": "line",
+      "score_marker": "o",
+      "score_x_quantity": "actual_selection_event_index",
+      "connect_by": "actual_selection_event_order",
+      "score_smoothing": false,
+      "force_monotonic_decrease": false,
+      "sort_points_by_score": false,
+      "score_gap_policy": "break_line",
+      "show_score_definition_and_direction": true,
+      "missing_trace_policy": "report_missing_actual_order_and_score_keep_available_bearing"
+    },
+    "accuracy_runtime": {
+      "id": "F3a",
+      "legacy_alias": "F3",
+      "enabled": true,
+      "anchor_budget": 12,
+      "frontend_reference_pairwise_budget": 6,
+      "frontends": [
+        "bo_epnp",
+        "bgpnp",
+        "sdp"
+      ],
+      "gnbp_frontend": "bo_epnp",
+      "gnbp_pairwise_budgets": [
+        4,
+        6,
+        8
+      ],
+      "noise_levels": "all",
+      "noise_layout": "combined",
+      "connect_by": "noise_order",
+      "runtime_mode": "pipeline_to_estimate",
+      "runtime_unit": "ms",
+      "error_y_scale": "log",
+      "gap_policy": "break_line",
+      "mixed_timing_protocol": "error"
+    },
+    "accuracy_budget_methods": {
+      "id": "F3b",
+      "enabled": true,
+      "anchor_budgets": [
+        6,
+        12,
+        18
+      ],
+      "pairwise_budget": 4,
+      "x_quantity": "requested_anchor_budget_per_node",
+      "require_actual_budget": true,
+      "frontend_source_pairwise_budget": 4,
+      "series": [
+        {
+          "frontend": "bo_epnp",
+          "pose_stage": "initial",
+          "label": "BO-EPnP"
+        },
+        {
+          "frontend": "bgpnp",
+          "pose_stage": "initial",
+          "label": "bgPnP"
+        },
+        {
+          "frontend": "sdp",
+          "pose_stage": "initial",
+          "label": "SDP"
+        },
+        {
+          "frontend": "bo_epnp",
+          "pose_stage": "final",
+          "label": "BO-EPnP+GNBP (KP=4)"
+        }
+      ],
+      "anchor_selection_strategy": "rank_logdet",
+      "pairwise_selection_strategy": "schur_greedy",
+      "noise_levels": "all",
+      "noise_layout": "separate",
+      "error_y_scale": "linear",
+      "verify_same_anchor_selected_ids_across_methods": true,
+      "selected_ids_mismatch_policy": "report_and_fail_comparison",
+      "gap_policy": "break_line",
+      "show_sample_counts": true,
+      "plot_kind": "line",
+      "marker": "o",
+      "connect_by": "anchor_budget_ascending",
+      "smoothing": false,
+      "panels": [
+        "translation_rmse",
+        "rotation_rmse"
+      ]
+    },
+    "fixed_budget_strategies": {
+      "id": "F4",
+      "enabled": true,
+      "frontend": "bo_epnp",
+      "pose_stage": "final",
+      "anchor_budget": 12,
+      "pairwise_budget": 6,
+      "strategy_pairs": [
+        {
+          "anchor": "random",
+          "pairwise": "random",
+          "label": "Random / Random"
+        },
+        {
+          "anchor": "uniform_time",
+          "pairwise": "uniform_time",
+          "label": "Uniform / Uniform"
+        },
+        {
+          "anchor": "rank_logdet",
+          "pairwise": "schur_greedy",
+          "label": "Rank-logdet / Schur"
+        }
+      ],
+      "noise_layout": "separate",
+      "minimum_boxplot_samples": 5,
+      "overlay_raw_samples": true,
+      "sample_unit": "one_trial_node_set_rmse",
+      "show_node_set_and_aggregation": true,
+      "show_stage_in_caption": true
+    },
+    "budget_sensitivity": {
+      "id": "F5",
+      "enabled": true,
+      "frontend": "bo_epnp",
+      "pose_stage": "final",
+      "anchor_selection_strategy": "rank_logdet",
+      "pairwise_selection_strategy": "schur_greedy",
+      "compare_other_methods": false,
+      "noise_layout": "separate",
+      "error_y_scale": "linear",
+      "show_error_curves": true,
+      "gap_policy": "break_line",
+      "show_selection_small_multiples": false,
+      "pose_results": {
+        "enabled": false,
+        "mode": "coordinate_frames",
+        "node_mode": "per_node",
+        "instance_source": "diagnostics.example",
+        "frame": "verified_common_reference",
+        "include_ground_truth": true,
+        "equal_axis_scale": true,
+        "triad_length_m": 0.5,
+        "translation_units": "m",
+        "color_by": "pairwise_budget",
+        "reference_color": "#202020",
+        "annotate_frames": true,
+        "camera_view": {
+          "elevation_deg": 22,
+          "azimuth_deg": -55
+        },
+        "save_pose_table": true,
+        "budget_pairs": "all_from_budget_grid",
+        "layout": "one_overlay_per_node_and_example"
+      },
+      "trajectory_overlay": {
+        "enabled_if_available": false,
+        "projection": "xy",
+        "equal_aspect": true,
+        "time_slots": "common_valid",
+        "realign_each_budget": false,
+        "missing_policy": "skip_with_reason_keep_coordinate_frame_plot"
+      },
+      "plot_kind": "line",
+      "layout": "one_figure_two_panels",
+      "panels": [
+        "translation_rmse",
+        "rotation_rmse"
+      ],
+      "budget_grid": {
+        "anchor_budgets": [
+          6,
+          8,
+          10,
+          12,
+          14,
+          16
+        ],
+        "pairwise_budgets": [
+          2,
+          4,
+          6,
+          8
+        ],
+        "combination_mode": "cartesian_product",
+        "expected_configuration_count": 24
+      },
+      "x_quantity": "requested_anchor_budget_per_node",
+      "line_group_by": "pairwise_budget",
+      "line_order": [
+        2,
+        4,
+        6,
+        8
+      ],
+      "connect_by": "anchor_budget_ascending",
+      "require_actual_budget": true,
+      "smoothing": false,
+      "interpolate_missing": false,
+      "noise_levels": "all",
+      "mix_noise_levels": false,
+      "show_sample_counts": true,
+      "show_budget_grid_coverage": true,
+      "verify_same_anchor_selected_ids_and_initial_pose_within_each_ka": true,
+      "initial_consistency_mismatch_policy": "report_and_fail_controlled_budget_comparison",
+      "series_styles": [
+        {
+          "pairwise_budget": 2,
+          "label": "KP=2",
+          "color": "#2878B5",
+          "marker": "o",
+          "linestyle": "-"
+        },
+        {
+          "pairwise_budget": 4,
+          "label": "KP=4",
+          "color": "#E07A21",
+          "marker": "s",
+          "linestyle": "--"
+        },
+        {
+          "pairwise_budget": 6,
+          "label": "KP=6",
+          "color": "#6A994E",
+          "marker": "^",
+          "linestyle": "-."
+        },
+        {
+          "pairwise_budget": 8,
+          "label": "KP=8",
+          "color": "#9B59B6",
+          "marker": "D",
+          "linestyle": ":"
+        }
+      ],
+      "optional_unimplemented_feature_policy": "error_only_if_explicitly_enabled"
+    }
+  },
+  "style": {
+    "font_family": "DejaVu Sans",
+    "font_size_pt": 10,
+    "line_width": 1.4,
+    "marker_size": 5,
+    "grid_alpha": 0.2,
+    "formats": [
+      "pdf",
+      "svg",
+      "png"
+    ],
+    "dpi": 300,
+    "budget_colors": [
+      "#2878B5",
+      "#E07A21",
+      "#6A994E",
+      "#9B59B6"
+    ],
+    "fixed_method_styles": true
+  },
+  "report": {
+    "create_html_index": true,
+    "copy_or_include_all_relative_assets": true,
+    "show_node_ids": true,
+    "show_node_aggregation": true,
+    "show_pose_stage": true,
+    "show_budgets": true,
+    "show_noise_and_sample_counts": true,
+    "link_metrics_coverage_config": true,
+    "export_resolved_plot_config": true
+  },
+  "config_migration": {
+    "from_baseline": "r3",
+    "intermediate_version_required": false,
+    "legacy_figure_aliases": {
+      "F3": "F3a"
+    },
+    "r3_F5_policy": "retain_selection_plot_as_optional_auxiliary",
+    "new_main_F5": "budget_sensitivity.budget_grid",
+    "new_capabilities_to_implement": [
+      "stage_selection.actual_order",
+      "stage_selection.score_curve",
+      "accuracy_budget_methods",
+      "budget_sensitivity"
+    ],
+    "preserve_user_choices": [
+      "diagnostics.plot_nodes",
+      "metrics.plot_nodes",
+      "metrics.node_mode",
+      "diagnostics.example",
+      "style"
+    ],
+    "budget_defaults_from_this_revision": true,
+    "conflicting_old_and_new_definitions": "error",
+    "read_old_results_without_trace": "allow_for_figures_that_do_not_need_trace"
+  },
+  "implementation_baseline": "r3",
+  "revision": "r5_from_r3_2026-10-14",
+  "cli_overrides": {
+    "supported": [
+      "results_roots",
+      "output_dir",
+      "diagnostics.plot_nodes",
+      "metrics.plot_nodes",
+      "figure_order"
+    ],
+    "precedence": [
+      "cli",
+      "plot_config",
+      "plot_defaults"
+    ]
+  }
+}

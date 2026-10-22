@@ -1,0 +1,142 @@
+{
+  "schema_version": "plot_collection_r5",
+  "config_kind": "experiment_suite",
+  "base_algorithm_config": "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\configs\\node_gnbp_plot\\base_node_gnbp.json",
+  "base_policy": "preserve_all_existing_values_except_explicit_semantic_overrides",
+  "algorithm_adapter": "config_adapter_contract.json",
+  "export_config": "export_plot_data_r5.json",
+  "input_policy": "use_collection_plan",
+  "deduplicate_physical_runs": true,
+  "suite_id": "r3_existing_figures",
+  "purpose": "Preserve r3 F3a/F4 configurations and collect new F2 trace on the selected BO 12+6 example",
+  "experiments": [
+    {
+      "config_id": "bo_ka12_kp4",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F3a.final.KP4",
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka12_kp6",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 6,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F3a.final.KP6",
+        "F3a.initial.bo_epnp",
+        "F1.example",
+        "F2.example",
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka12_kp8",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 8,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F3a.final.KP8",
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bg_ka12_kp6",
+      "solver_semantics": {
+        "frontend": "bgpnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 6,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F3a.initial.bgpnp"
+      ]
+    },
+    {
+      "config_id": "sdp_ka12_kp6",
+      "solver_semantics": {
+        "frontend": "sdp",
+        "anchor_budget": 12,
+        "pairwise_budget": 6,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F3a.initial.sdp"
+      ]
+    },
+    {
+      "config_id": "bo_ka12_kp6_random",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 6,
+        "anchor_selection_strategy": "random",
+        "pairwise_selection_strategy": "random"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F4.random_random"
+      ]
+    },
+    {
+      "config_id": "bo_ka12_kp6_uniform",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 6,
+        "anchor_selection_strategy": "uniform_time",
+        "pairwise_selection_strategy": "uniform_time"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F4.uniform_uniform"
+      ]
+    },
+    {
+      "config_id": "bo_ka12_kp6_full_for_F4",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 6,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F4.rank_schur",
+        "F5.final"
+      ]
+    }
+  ],
+  "reuse_aliases": [
+    {
+      "config_id": "bo_ka12_kp6_full_for_F4",
+      "same_solver_as": "bo_ka12_kp6",
+      "allowed_only_if_full_identity_matches": true
+    }
+  ],
+  "implementation_baseline": "r3",
+  "revision": "r5_from_r3_2026-10-14"
+}

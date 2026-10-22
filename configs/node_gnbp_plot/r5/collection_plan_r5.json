@@ -1,0 +1,165 @@
+{
+  "schema_version": "plot_collection_plan_r5",
+  "config_kind": "collection_plan",
+  "base_algorithm_config": "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\configs\\node_gnbp_plot\\base_node_gnbp.json",
+  "suite_files": [
+    "experiments_budget_accuracy.json",
+    "experiments_budget_grid.json",
+    "experiments_legacy_figures.json"
+  ],
+  "export_config": "export_plot_data_r5.json",
+  "adapter_contract": "config_adapter_contract.json",
+  "existing_result_roots": [
+    "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\data\\node_gnbp_plot_data\\20261011T040459_335166Z"
+  ],
+  "output_root": "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\data\\node_gnbp_plot_data\\r5",
+  "datasets": [
+    {
+      "observation_path": "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\data_generation\\outputs\\20261022T075722_533816Z\\observations\\noise_1_seed7.npz",
+      "base_sequence_id": "sequence_01",
+      "noise_level_id": "noise_1",
+      "noise_realization_id": "r00",
+      "metadata_source": "read_and_validate_npz",
+      "sigma_azimuth_deg": null,
+      "sigma_elevation_deg": null,
+      "noise_seed": null
+    },
+    {
+      "observation_path": "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\data_generation\\outputs\\20261022T075722_533816Z\\observations\\noise_2_seed7.npz",
+      "base_sequence_id": "sequence_01",
+      "noise_level_id": "noise_2",
+      "noise_realization_id": "r00",
+      "metadata_source": "read_and_validate_npz",
+      "sigma_azimuth_deg": null,
+      "sigma_elevation_deg": null,
+      "noise_seed": null
+    },
+    {
+      "observation_path": "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\data_generation\\outputs\\20261022T075722_533816Z\\observations\\noise_3_seed7.npz",
+      "base_sequence_id": "sequence_01",
+      "noise_level_id": "noise_3",
+      "noise_realization_id": "r00",
+      "metadata_source": "read_and_validate_npz",
+      "sigma_azimuth_deg": null,
+      "sigma_elevation_deg": null,
+      "noise_seed": null
+    },
+    {
+      "observation_path": "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\data_generation\\outputs\\20261022T075722_533816Z\\observations\\noise_4_seed7.npz",
+      "base_sequence_id": "sequence_01",
+      "noise_level_id": "noise_4",
+      "noise_realization_id": "r00",
+      "metadata_source": "read_and_validate_npz",
+      "sigma_azimuth_deg": null,
+      "sigma_elevation_deg": null,
+      "noise_seed": null
+    }
+  ],
+  "windows": {
+    "mode": "existing_entrypoint_window_parameters",
+    "window_size": 200,
+    "window_starts": [
+      0
+    ]
+  },
+  "trials": {
+    "trial_ids": [
+      0
+    ],
+    "random_seed_source": "existing_base_and_existing_derivation",
+    "timing_repeats": 1,
+    "timing_repeat_changes_trial_or_seed": false
+  },
+  "reuse": {
+    "enabled": true,
+    "identity_fields": [
+      "input_hash",
+      "window_absolute_indices",
+      "graph_id",
+      "resolved_algorithm_config",
+      "algorithm_seed_context",
+      "code_version"
+    ],
+    "fields_required_by_consuming_figure": true,
+    "timing_requires_same_protocol": true,
+    "duplicate_physical_runs": "reference_once",
+    "do_not_recount_as_accuracy_samples": true,
+    "missing_trace": "collect_preselected_original_run_only_when_F2_consumes_it",
+    "missing_pose_with_source_available": "export_from_existing_records_without_resolving",
+    "source_baseline": "r3",
+    "require_trace_for_all_figures": false,
+    "trace_required_for": [
+      "F2.score_curve",
+      "F2.actual_order"
+    ],
+    "cross_code_version_policy": "same_version_or_explicit_verified_recording_only_compatibility_for_accuracy",
+    "compatibility_evidence_required": true,
+    "source_version_preserved": true,
+    "timing_compatibility_independent_of_accuracy": true,
+    "compatibility_report": "code_version_compatibility.json"
+  },
+  "execution": {
+    "run_mode": "existing_full_pipeline",
+    "budget_cartesian_scan": false,
+    "unknown_existing_cli_option": "error",
+    "missing_inputs": "error",
+    "dry_run_before_execution": true,
+    "synthesize_measurements": false,
+    "auto_retry_failed_solver_with_changed_inputs": false,
+    "budget_plan_mode": "explicit_experiments_with_materialized_cartesian_grid",
+    "budget_grid_expansion": "already_expanded_validate_only"
+  },
+  "outputs": {
+    "resolved_plan": "collection_resolved_plan.json",
+    "coverage": "collection_coverage.csv",
+    "missing_runs": "missing_runs.json",
+    "reuse_map": "physical_run_references.json",
+    "budget_grid_coverage": "budget_grid_coverage.csv",
+    "r3_inventory": "r3_inventory.csv",
+    "figure_capabilities": "figure_capabilities.csv",
+    "trace_collection_plan": "trace_collection_plan.json"
+  },
+  "notes": [
+    "Replace all PATH_TO_/REPLACE_WITH placeholders before execution.",
+    "200/[0] is a window example; reuse the actual windows of the original results.",
+    "One noise realization is not enough to claim a distribution; F4 falls back to scatter.",
+    "Semantic overrides require current-source adapter implementation; do not pass this JSON to NodeGNBPConfig.",
+    "F5 contains all 24 KA/KP pairs as explicit experiments; budget_cartesian_scan=false prevents a second expansion inside the existing runner.",
+    "All three suites contain 41 references and 35 distinct solver configurations before multiplying by actual datasets/windows/trials/timing repeats.",
+    "Implementation starts from r3; r4 was never executed. No r4 files, traces, collector or experiments are required as prerequisites.",
+    "The historical r3 plan has 10 references and 9 distinct configurations. Eight occur in the new 35-configuration matrix; 27 are new only if those eight are genuinely reusable.",
+    "Missing trace and incompatible timing can require additional collection of old configurations; compute this from the inventory, never infer execution from a prompt.",
+    "The r3 BO 18+6 record is retained but is not a substitute for BO 18+4 in F3b.",
+    "Resolve paths relative to their containing JSON; preserve the real r3 base, windows, noise metadata and seed derivation."
+  ],
+  "implementation_baseline": "r3",
+  "revision": "r5_from_r3_2026-10-14",
+  "r3_migration": {
+    "baseline": "r3",
+    "requires_intermediate_version": false,
+    "inspect_existing_code_and_results_first": true,
+    "original_config_filename_hints": [
+      "base_node_gnbp.json",
+      "methods_compare.json",
+      "methods_strategies.json",
+      "methods_budget_extra.json",
+      "export_plot_data.json",
+      "collection_plan.json",
+      "plot_node_gnbp.json"
+    ],
+    "new_capabilities": [
+      "selection_event_trace",
+      "score_metadata",
+      "pose_frame_metadata_if_missing",
+      "accuracy_budget_methods",
+      "joint_budget_error_lines"
+    ],
+    "historical_matrix_reference_only": {
+      "references": 10,
+      "distinct_configurations": 9,
+      "intersection_with_target_matrix": 8,
+      "new_configuration_difference": 27
+    },
+    "do_not_assume_historical_runs_exist": true
+  }
+}

@@ -640,31 +640,35 @@ class bearing_linear_solver():
         prob.solve(solver = cp.MOSEK)
 
         # Print result.
-        logger.debug("The optimal value is", prob.value)
+        logger.debug("The optimal value is %s", prob.value)
         logger.debug("A solution X is")
         logger.debug(X.value)
         sol = X.value
 
-        # Perform SVD on the solution matrix
-        U, S, Vt = np.linalg.svd(sol)
+        if sol is None:
+            raise RuntimeError("SDP returned no solution matrix.")
+        if not np.all(np.isfinite(sol)):
+            raise RuntimeError("SDP returned a nonfinite solution matrix.")
 
-        # Keep only the largest singular value
-        S_rank1 = np.zeros_like(S)
-        S_rank1[0] = S[0]
+        # Preserve relative signs via the dominant eigenvector, not sqrt(diag(X)).
+        sol_symmetric = 0.5 * (sol + sol.T)
+        eigenvalues, eigenvectors = np.linalg.eigh(sol_symmetric)
+        lambda_max = float(eigenvalues[-1])
+        if lambda_max <= 0.0:
+            raise RuntimeError("SDP solution has no positive principal eigenvalue.")
+        z = np.sqrt(lambda_max) * eigenvectors[:, -1]
 
-        # Construct the rank-1 approximation
-        sol_rank1 = U[:, 0:1] @ np.diag(S_rank1[0:1]) @ Vt[0:1, :]
-
-        # Log the rank-1 approximation
-        logger.debug("Rank-1 approximation of the solution X is")
-        logger.debug(sol_rank1)
-
-        xsol = np.sqrt(np.diag(sol_rank1))
-
-        R = xsol[:9].reshape(3, 3)
-        t = xsol[9:-1]
-        R = bearing_linear_solver.orthogonal_procrustes(R)
-        logger.debug(f'Solution xsol: {xsol}')
+        # P1 = [A, b] represents A*psi-b=0 with z=[psi; -1].
+        # Dividing by z[-1] also cancels the eigenvector's arbitrary global sign.
+        if abs(float(z[-1])) < 1e-10:
+            raise RuntimeError(
+                "Cannot recover SDP pose: homogeneous component is near zero."
+            )
+        psi = -z[:-1] / z[-1]
+        R = bearing_linear_solver.orthogonal_procrustes(psi[:9].reshape(3, 3))
+        t = psi[9:12]
+        logger.debug("Largest SDP eigenvalue: %.6e", lambda_max)
+        logger.debug("Recovered pose vector: %s", psi)
 
         return R, t
 

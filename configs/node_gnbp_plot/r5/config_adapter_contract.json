@@ -1,0 +1,85 @@
+{
+  "schema_version": "plot_config_adapter_r5",
+  "config_kind": "adapter_contract",
+  "implementation_status": "bound_and_validated_against_current_checkout",
+  "existing_entrypoint_hint": "src.exp_node_gnbp",
+  "base_config_policy": "reuse_user_existing_validated_base",
+  "semantic_fields": {
+    "frontend": {
+      "enum": [
+        "bo_epnp",
+        "bgpnp",
+        "sdp"
+      ],
+      "existing_key_path": "initialization_method",
+      "existing_value_mapping": {
+        "bo_epnp": "bo_epnp",
+        "bgpnp": "bgpnp",
+        "sdp": "sdp"
+      }
+    },
+    "anchor_budget": {
+      "type": "integer",
+      "minimum": 1,
+      "existing_key_path": "anchor_budget_per_node"
+    },
+    "pairwise_budget": {
+      "type": "integer",
+      "minimum": 0,
+      "existing_key_path": "pairwise_budget_per_node"
+    },
+    "anchor_selection_strategy": {
+      "enum": [
+        "rank_logdet",
+        "random",
+        "uniform_time"
+      ],
+      "existing_key_path": "anchor_selection_strategy",
+      "existing_value_mapping": {
+        "rank_logdet": "rank_logdet",
+        "random": "random",
+        "uniform_time": "uniform_time"
+      }
+    },
+    "pairwise_selection_strategy": {
+      "enum": [
+        "schur_greedy",
+        "random",
+        "uniform_time"
+      ],
+      "existing_key_path": "pairwise_selection_strategy",
+      "existing_value_mapping": {
+        "schur_greedy": "schur_greedy",
+        "random": "random",
+        "uniform_time": "uniform_time"
+      }
+    }
+  },
+  "rules": {
+    "unresolved_mapping": "error_before_execution",
+    "validate_with_existing_parser": true,
+    "unknown_fields": "error",
+    "implicit_fallback": "forbidden",
+    "alter_seed_derivation": false,
+    "alter_solver_control_flow": false,
+    "preserve_unmentioned_base_values": true,
+    "keep_export_plot_fields_out_of_solver_config": true,
+    "preserve_existing_r3_cli_and_callers": true,
+    "require_intermediate_version": false
+  },
+  "required_generated_outputs": [
+    "resolved_algorithm_configs.json",
+    "adapter_mapping_resolved.json",
+    "collection_dry_run.csv",
+    "actual_commands.txt",
+    "r3_implementation_inventory.md",
+    "r3_to_r5_config_mapping.md"
+  ],
+  "implementation_baseline": "r3",
+  "revision": "r5_from_r3_2026-10-14",
+  "binding_sources": [
+    "actual_r3_config_parser",
+    "actual_r3_base_config",
+    "actual_r3_method_overrides"
+  ]
+}

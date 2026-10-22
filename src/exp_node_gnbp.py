@@ -217,7 +217,8 @@ def _provenance() -> dict:
         "source_sha256": {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in (root / "src").glob("*.py") if path.name in (
                 "exp_node_gnbp.py", "boepnp_gnbp_nodes.py", "node_gnbp_backend.py", "bearing_segmentation.py",
-                "gnbp_keypoint_selection.py", "multi_agent_bearing_gabp.py", "bo_epnp_solver.py", "bgPnp_GABP.py", "bearing_only_solver.py")}}
+                "gnbp_keypoint_selection.py", "multi_agent_bearing_gabp.py", "bo_epnp_solver.py", "bgPnp_GABP.py", "bearing_only_solver.py",
+                "selection_trace.py")}}
 
 
 def main() -> None:
@@ -232,6 +233,9 @@ def main() -> None:
     parser.add_argument("--window-starts", type=int, nargs="+", default=[0])
     parser.add_argument("--scan-budgets", action="store_true")
     parser.add_argument("--plot", action="store_true")
+    parser.add_argument("--export-config", type=Path, help="Independent plot export options")
+    parser.add_argument("--export-suite", default="manual")
+    parser.add_argument("--export-context", type=Path, help="Input/noise/repeat provenance JSON")
     parser.add_argument("--measurement-mode", choices=["b4", "b3_diagonal_approx"], default="b4")
     parser.add_argument("--input-adjacency-convention", choices=["target_observer", "observer_target"], default="target_observer")
     for name in ("anchor-budget-per-node", "pairwise-budget-per-node", "representatives-per-segment",
@@ -249,6 +253,10 @@ def main() -> None:
     parser.add_argument("--anchor-budget-values", type=int, nargs="+")
     parser.add_argument("--pairwise-budget-values", type=int, nargs="+")
     args = parser.parse_args()
+    from analysis.r5_config import export_options
+    export_config = (json.loads(args.export_config.read_text(encoding="utf-8"))
+                     if args.export_config else {})
+    recording_options = export_options(export_config)
     values = json.loads(args.config.read_text(encoding="utf-8")) if args.config else {}
     if "schur" in values:
         values["schur"] = GNBPKeypointSelectionConfig(**values["schur"])
@@ -269,6 +277,7 @@ def main() -> None:
     if args.window_size < 1 or any(i < 0 for i in args.window_starts):
         parser.error("Windows require a positive size and nonnegative starts.")
     records, provenance = [], _provenance()
+    export_windows = []
     run_started = time.perf_counter()
     for path in args.observations:
         inputs, truth, metadata = load_npz_inputs(path, measurement_mode=args.measurement_mode,
@@ -291,11 +300,17 @@ def main() -> None:
                 budgets = list(itertools.product(method_cfg.anchor_budget_values, method_cfg.pairwise_budget_values)) if args.scan_budgets else [(method_cfg.anchor_budget_per_node, method_cfg.pairwise_budget_per_node)]
                 runs.extend(replace(method_cfg, anchor_budget_per_node=a, pairwise_budget_per_node=p) for a,p in budgets)
             for run_cfg in runs:
-                result = solve_window(window, run_cfg)
+                result = solve_window(
+                    window, run_cfg,
+                    trace_selection=recording_options.get("trace_selection", False))
                 record = result.record
                 record.update(dataset=metadata, provenance=provenance)
                 record["evaluation"] = evaluate_record(record, truth)
+                if recording_options.get("r5"):
+                    record["evaluation_reference"] = json.loads(json.dumps(truth, default=_json_default))
                 records.append(record)
+                if args.export_config:
+                    export_windows.append(window)
                 label = f"{run_cfg.initialization_method}/{run_cfg.anchor_selection_strategy}/{run_cfg.pairwise_selection_strategy}/seg={run_cfg.segmentation_enabled}"
                 record["method_label"] = label
                 print(f"{path.name} [{start},{stop}) {label} K_A={run_cfg.anchor_budget_per_node} K_P={run_cfg.pairwise_budget_per_node}: {record['status']}", flush=True)
@@ -304,6 +319,12 @@ def main() -> None:
     save_records(output, records, {**provenance, "config": asdict(cfg), "method_configs": [asdict(c) for c in method_configs], "record_count": len(records),
         "first_stage_cache": "disabled; each recorded run includes actual computation",
         "experiment_wall_seconds": time.perf_counter()-run_started})
+    if args.export_config:
+        from src.node_gnbp_result_export import export_plot_artifacts
+
+        context = json.loads(args.export_context.read_text(encoding="utf-8")) if args.export_context else {}
+        context["suite_id"] = args.export_suite
+        export_plot_artifacts(output, export_windows, records, [r["dataset"] for r in records], export_config, context)
     if args.plot:
         plot_records(records, output)
     print(f"Saved: {output.resolve()}", flush=True)

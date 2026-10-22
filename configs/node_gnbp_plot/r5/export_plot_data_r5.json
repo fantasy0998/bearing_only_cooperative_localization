@@ -1,0 +1,118 @@
+{
+  "schema_version": "plot_export_r5",
+  "enabled": true,
+  "output_subdir": "plot_export",
+  "preserve_original_outputs": true,
+  "nodes": "all",
+  "edges": "all",
+  "save_resolved_algorithm_config": true,
+  "save_provenance": true,
+  "bearing_snapshot": {
+    "enabled": true,
+    "frame": "segmentation_frame_B3",
+    "save_original_indices": true,
+    "save_timestamps_if_available": true,
+    "save_validity_mask": true,
+    "save_breaks": true,
+    "deduplicate_by_input_window_graph": true,
+    "allow_pickle": false
+  },
+  "selection": {
+    "save_segments": true,
+    "save_boundaries_and_reasons": true,
+    "save_candidates": true,
+    "save_supplements": true,
+    "save_final_selected": true,
+    "save_actual_budget_per_node_and_edge": true,
+    "save_requested_budget_per_node": true
+  },
+  "selection_trace": {
+    "enabled": true,
+    "stages": [
+      "anchor",
+      "pairwise"
+    ],
+    "scope": "all_selected_nodes",
+    "save_baseline": true,
+    "save_accepted_events_only": true,
+    "save_all_candidate_scores": false,
+    "save_actual_order": true,
+    "save_score_before_after": true,
+    "save_rank_before_after": true,
+    "save_score_definitions": true,
+    "preserve_batch_events": true,
+    "preserve_add_remove_replace_events": true,
+    "nonfinite_policy": "null_with_status",
+    "recompute_greedy": false,
+    "diagnostic_regularized_logdet": {
+      "enabled": false,
+      "epsilon": null,
+      "matrix_snapshots": false,
+      "compute_after_timing": true
+    },
+    "save_score_semantics": true,
+    "save_objective_direction": true,
+    "save_winner_candidate_score_if_already_computed": true,
+    "fabricate_monotonic_score": false,
+    "hook_policy": {
+      "implement_in_anchor_and_pairwise_selection_loops": true,
+      "capture_after_original_acceptance_before_time_sort": true,
+      "use_already_computed_winner_details": true,
+      "score_callback_default": "none_for_legacy_callers",
+      "selection_rng_access_for_logging": false,
+      "mutable_history_references": "forbidden",
+      "thread_order_scope": "node_stage"
+    }
+  },
+  "poses": {
+    "save_initial": true,
+    "save_final": true,
+    "save_evaluation_reference_if_available": true,
+    "save_original_representation": true,
+    "save_canonical_world_from_local_if_verified": true,
+    "save_frame_conventions": true,
+    "save_per_node_errors": true
+  },
+  "trajectories": {
+    "save_local_if_already_available": true,
+    "save_reference_if_already_available": true,
+    "missing_policy": "declare_capability_unavailable",
+    "generate_or_align_new_trajectory": false
+  },
+  "timing": {
+    "protocol": "pipeline_to_estimate",
+    "save_initial_ready": true,
+    "save_final_ready": true,
+    "save_existing_stage_times": true,
+    "serialize_after_final_ready": true,
+    "record_trace_enabled_in_protocol": true
+  },
+  "status": {
+    "save_stage_status": true,
+    "save_failure_reason": true,
+    "save_gn_bp_iterations": true,
+    "save_convergence_flag": true
+  },
+  "formats": {
+    "metadata": "json",
+    "traces": "jsonl",
+    "poses": "jsonl",
+    "curves": "npz",
+    "tabular": "csv"
+  },
+  "provenance": {
+    "save_budget_pair": true,
+    "save_physical_run_references": true,
+    "save_initial_selection_and_pose_fingerprints": true,
+    "fingerprint_after_timing": true
+  },
+  "implementation_baseline": "r3",
+  "revision": "r5_from_r3_2026-10-14",
+  "compatibility": {
+    "read_baseline": "r3",
+    "preserve_original_result_schema": true,
+    "new_fields_are_additive": true,
+    "trace_capability_must_be_explicit": true,
+    "do_not_reconstruct_trace_from_sorted_selected": true
+  }
+}

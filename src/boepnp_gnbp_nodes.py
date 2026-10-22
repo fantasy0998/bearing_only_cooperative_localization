@@ -26,6 +26,7 @@ from src import multi_agent_bearing_gabp as kernel
 from src.node_gnbp_backend import (
     UAVNode, ObservationFactor, NodeExecutor, freeze_states, readonly, refine_nodes,
 )
+from src.selection_trace import capture
 
 
 @dataclass(frozen=True)
@@ -290,6 +291,8 @@ def segment_node(node: UAVNode, payload: tuple) -> None:
         target_points = (window.anchor_position_world if phase == "anchor" else window.estimated_position_local)[target]
         valid &= np.all(np.isfinite(node.local_trajectory[:, idx]), axis=0) & np.all(np.isfinite(target_points[:, idx]), axis=0)
         info["invalid_inputs"] = idx[~valid].tolist()
+        # Export the already-computed mask; plotting must not invent validity rules.
+        info["valid_absolute_indices"] = idx[valid].tolist()
         info["raw_count"], info["valid_count"] = len(idx), int(valid.sum())
         directions = np.einsum("nij,jn->in", q, b)
         # Explicit invalid observations and sparse missing columns both break runs.
@@ -312,6 +315,7 @@ def segment_node(node: UAVNode, payload: tuple) -> None:
                     for n, (s, reason) in enumerate(zip(result.segments, result.split_reasons)))
             else:
                 segments.extend(np.array([int(idx[p])]) for p in run)
+                info["segments"].extend({"indices": [int(idx[p])], "start_reason": "segmentation_disabled"} for p in run)
         by_phase[phase][name] = tuple(segments)
     for phase, segments in by_phase.items():
         budget = cfg.anchor_budget_per_node if phase == "anchor" else cfg.pairwise_budget_per_node
@@ -381,9 +385,12 @@ def select_anchor(node: UAVNode, window: WindowInput, cfg: NodeGNBPConfig) -> li
                       logdet_regularization=cfg.anchor_logdet_regularization)
     diagnostic["pool_rank"] = _matrix_metrics(full, tolerance, cfg.anchor_logdet_regularization)[0]
     count = min(len(keys), cfg.anchor_budget_per_node)
+    trace = node.diagnostics.get("selection_trace")
     if cfg.anchor_selection_strategy == "rank_logdet":
         remaining, selected = list(range(len(keys))), []
         current_score = (0, float(full.shape[1] * np.log(cfg.anchor_logdet_regularization)))
+        capture(trace, "anchor", None, {},
+                {"rank": current_score[0], "logdet": current_score[1]})
         while remaining and len(selected) < count:
             best, score = None, None
             for index in remaining:
@@ -393,6 +400,10 @@ def select_anchor(node: UAVNode, window: WindowInput, cfg: NodeGNBPConfig) -> li
                         or (value[0] == score[0] and value[1] > score[1] + 1e-12)):
                     best, score = index, value
             selected.append(best); remaining.remove(best)
+            capture(trace, "anchor", keys[best],
+                    {"rank": current_score[0], "logdet": current_score[1]},
+                    {"rank": score[0], "logdet": score[1]}, winner=score,
+                    mode="rank_then_regularized_logdet")
             diagnostic["history"].append({"id": _key_id(keys[best]), "rank": score[0],
                 "logdet": score[1], "logdet_gain": score[1] - current_score[1]})
             current_score = score
@@ -400,6 +411,9 @@ def select_anchor(node: UAVNode, window: WindowInput, cfg: NodeGNBPConfig) -> li
     else:
         chosen = sample_candidates(keys, count, cfg.anchor_selection_strategy, window.timestamps,
                                    stage_rng(cfg, window.window_id, node.node_id, "anchor"))
+        capture(trace, "anchor", None, {}, {}, source=cfg.anchor_selection_strategy)
+        for key in chosen:
+            capture(trace, "anchor", key, {}, {}, source=cfg.anchor_selection_strategy)
     selected_rank, logdet = _matrix_metrics(blocks[[keys.index(k) for k in chosen]].reshape(-1, full.shape[1]),
                                            tolerance, cfg.anchor_logdet_regularization)
     diagnostic.update({"selected_count": len(chosen), "selected_ids": [_key_id(k) for k in chosen],
@@ -462,11 +476,13 @@ def initialize_node(node: UAVNode, payload: tuple) -> None:
 def build_measurement(window: WindowInput, key: EdgeTimeKey) -> kernel.AnchorBearingFactor | kernel.PairwiseBearingFactor:
     """Retain raw sensor angles, actual noise, local points and original extrinsics."""
     edge, pos = _edge_point(window, key)
+
     kwargs = dict(observer_id=key.observer_id, measured_angles=kernel.vector_to_az_el(edge.bearings[:, pos]),
         observer_point_local=window.estimated_position_local[key.observer_id][:, key.time_index],
         sigma_azimuth=edge.sigma_azimuth, sigma_elevation=edge.sigma_elevation,
         observer_extrinsic_rotation=edge.rotation_b3_sensor[pos].T,
         observer_extrinsic_translation=edge.translation_sensor[pos])
+    
     if key.target_id in window.anchor_ids:
         return kernel.AnchorBearingFactor(anchor_position_world=window.anchor_position_world[key.target_id][:, key.time_index], **kwargs)
     return kernel.PairwiseBearingFactor(target_id=key.target_id,
@@ -491,7 +507,7 @@ def _geometry_gate(factor: kernel.PairwiseBearingFactor, states: Mapping, cfg: G
         if np.linalg.norm(residual) > cfg.max_whitened_residual:
             raise ValueError("whitened_residual_gate")
 
-
+## 计算现有观测得到的基础信息矩阵，用于判断哪个方向的观测可观性不好
 def base_information(node: UAVNode, payload: tuple) -> np.ndarray:
     """Anchor-only selection base: deliberately distinct from backend pose prior."""
     states, scale = payload
@@ -511,7 +527,9 @@ def select_pairwise(node: UAVNode, payload: tuple) -> None:
     candidates, rejected, atoms = {}, [], []
     for key in node.candidates["pairwise"]:
         try:
+            ## 将观测打包变成一个因子，包含双方局部坐标系位置，位姿变换矩阵，以及bearing数值和噪声
             factor = build_measurement(window, key)
+            ## 判断哪些bearing是病态的，主要是判断节点间距离是否过小，预测方向或实测方向是否接近角度极点，如果配置了残差门限，预测角度与实测角度的差异是否过大。
             _geometry_gate(factor, states, selection_cfg)
             candidates[key] = factor
         except (ValueError, np.linalg.LinAlgError) as error:
@@ -520,10 +538,14 @@ def select_pairwise(node: UAVNode, payload: tuple) -> None:
     score_started = time.perf_counter()
     if cfg.pairwise_selection_strategy == "schur_greedy":
         for key, factor in candidates.items():
+            ## 建立待估节点之间的信息矩阵
             info = kernel._linearize_pairwise_factor(factor, states)
+            ## 用来按照Atom的格式打包bearing观测信息，便于后面执行多轮选点
             atoms.append(_Atom(key, factor, scale.T @ info.omega_ii @ scale,
                                scale.T @ info.omega_ij @ scale, scale.T @ info.omega_jj @ scale))
-        chosen, diagnostic = _select_local(node.node_id, atoms, set(node.selected["anchor"]), base, selection_cfg)
+        chosen, diagnostic = _select_local(
+            node.node_id, atoms, set(node.selected["anchor"]), base, selection_cfg,
+            trace_sink=node.diagnostics.get("selection_trace"))
     else:
         proposed = sample_candidates(list(candidates), len(candidates), cfg.pairwise_selection_strategy,
                                      window.timestamps, stage_rng(cfg, window.window_id, node.node_id, "pairwise"))
@@ -543,6 +565,10 @@ def select_pairwise(node: UAVNode, payload: tuple) -> None:
                 continue
             chosen.append(key); counts[key.edge_key] = counts.get(key.edge_key, 0) + 1
         diagnostic = {"trial_score_count": 0, "stop_reason": "budget_exhausted" if len(chosen) == cfg.pairwise_budget_per_node else "no_eligible_candidates"}
+        trace = node.diagnostics.get("selection_trace")
+        capture(trace, "pairwise", None, {}, {}, source=cfg.pairwise_selection_strategy)
+        for key in chosen:
+            capture(trace, "pairwise", key, {}, {}, source=cfg.pairwise_selection_strategy)
     for key in chosen:
         node.owned_factors[_key_id(key)] = ObservationFactor(_key_id(key), candidates[key])
     node.selected["pairwise"] = chosen
@@ -573,15 +599,23 @@ class NodeWindowResult:
     record: dict[str, Any]
 
 
-def solve_window(window: WindowInput, config: NodeGNBPConfig | None = None) -> NodeWindowResult:
+def solve_window(window: WindowInput, config: NodeGNBPConfig | None = None,
+                 *, trace_selection: bool = False) -> NodeWindowResult:
     """Execute all initialization barriers before selection/BP; no hidden fallback."""
     cfg = config or NodeGNBPConfig()
     started = time.perf_counter()
     nodes = {key: UAVNode(key, local_trajectory=window.estimated_position_local[key]) for key in window.estimated_ids}
+    if trace_selection: ## 是否详细记录选点过程的开关，主要用于绘图时显示贪心打分函数的变化情况
+        for node in nodes.values():
+            node.diagnostics["selection_trace"] = []
+    # 已提供的观测边
     present = {(edge.observer_id, edge.target_id) for edge in window.edges}
+    # 拓扑中包含，但数据中未找到的观测边
     missing = [(i,j) for row,i in enumerate(window.node_ids) for col,j in enumerate(window.node_ids)
                if window.observation_adjacency[row,col] and (i,j) not in present]
+    # 在后端是否加入位姿先验，开启先验会生成一个6*6协方差矩阵，增加先验是为了让最终结果靠近初始化的结果，即使不增加先验，后续节点也会从因子中获得协方差信息
     covariance = _build_prior_covariance(cfg.sigma_prior_rotation_deg, cfg.sigma_prior_translation) if cfg.prior_enabled else None
+
     record = {"schema_version": 1, "window_id": window.window_id, "absolute_indices": window.absolute_indices.tolist(),
         "config": asdict(cfg), "graph": {"node_ids": window.node_ids, "anchor_ids": window.anchor_ids,
         "estimated_ids": window.estimated_ids, "observation_adjacency": window.observation_adjacency.astype(int).tolist(),
@@ -595,22 +629,31 @@ def solve_window(window: WindowInput, config: NodeGNBPConfig | None = None) -> N
         "status": "initialization_failed", "failed_node_ids": [], "timings": {}, "backend": None}
     with NodeExecutor(cfg.executor, cfg.workers) as executor:
         for name, operation in (("segmentation", segment_node), ("initialization", initialize_node)):
+            ## 在这针对每个点执行轨迹分段并得到与锚节点观测的初始化位姿 
             stage_started = time.perf_counter()
             executor.map_nodes(nodes, operation, (window, cfg))
+            if name == "initialization":
+                initial_ready = time.perf_counter() - started
             record["timings"][name + "_wall_seconds"] = time.perf_counter() - stage_started
         record["failed_node_ids"] = sorted(key for key,node in nodes.items() if node.state is None)
+        record["timings"]["time_to_initial_estimate_wall_seconds"] = initial_ready if not record["failed_node_ids"] else None
+        record["timings"]["time_to_final_estimate_wall_seconds"] = None
         if not record["failed_node_ids"]:
+            # 冻结的意思是保存一个位姿副本出来，原来node.state可以继续更新
             states = freeze_states({key: node.state for key,node in nodes.items()})
             scale = np.diag([1., 1., 1., *([cfg.schur.translation_scale] * 3)])
             stage_started = time.perf_counter()
             try:
+                ## 把锚节点的bearing因子变成信息矩阵
                 bases = executor.map_nodes(nodes, base_information, (states, readonly(scale)))
                 base = MappingProxyType(dict(zip(sorted(nodes), bases)))
+                ## 选点
                 executor.map_nodes(nodes, select_pairwise, (window, cfg, states, base))
                 record["timings"]["pairwise_selection_wall_seconds"] = time.perf_counter() - stage_started
                 record["status"] = "backend_failed"
                 record["backend"] = refine_nodes(nodes, executor=executor, settings=cfg.backend_settings(),
                                                    prior_covariance=covariance, window_id=window.window_id)
+                record["timings"]["time_to_final_estimate_wall_seconds"] = time.perf_counter() - started
                 record["status"] = "completed"  # Convergence flags are separate, never inferred from completion.
             except (ValueError, RuntimeError, np.linalg.LinAlgError) as error:
                 record["status"] = "backend_failed" if record["status"] == "backend_failed" else "selection_failed"
@@ -625,4 +668,5 @@ def solve_window(window: WindowInput, config: NodeGNBPConfig | None = None) -> N
     record["timings"]["pre_backend_node_compute_seconds_sum"] = sum(sum(float(value) for name,value in n.diagnostics.items()
         if name in ("segmentation_seconds", "initialization_seconds", "pairwise_selection_seconds")) for n in nodes.values())
     record["timings"]["end_to_end_wall_seconds"] = time.perf_counter() - started
+    record["recording"] = {"selection_trace_enabled": trace_selection}
     return NodeWindowResult(nodes, record)

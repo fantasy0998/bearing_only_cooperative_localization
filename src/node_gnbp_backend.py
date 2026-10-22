@@ -204,6 +204,10 @@ class NodeExecutor:
             raise ValueError("Executor must be serial/thread with positive workers.")
         self.pool = ThreadPoolExecutor(max_workers=workers) if mode == "thread" else None
 
+    ## 对每个节点执行指定操作
+    ## nodes	    节点字典，例如 {"B": node_B, "C": node_C}
+    ## operation	要执行的方法名或函数
+    ## snapshot	    传给操作的公共参数，常是状态快照或配置组成的元组
     def map_nodes(self, nodes: Mapping[str, UAVNode], operation: Any, snapshot: Any) -> list:
         """Return in ID order only after every worker has completed this stage."""
         def invoke(node: UAVNode) -> Any:
@@ -312,7 +316,7 @@ def refine_nodes(nodes: Mapping[str, UAVNode], *, executor: NodeExecutor,
     for gn in range(settings.max_gn_iterations):
         states = freeze_states({key: node.state for key, node in nodes.items()})
         costs = executor.map_nodes(nodes, "prepare_gn", (states, priors, prior_covariance))
-        stats = solve_nodes_linearized(nodes, executor, router, settings, window_id, gn)
+        stats = solve_nodes_linearized(nodes, executor, router, settings, window_id, gn)  ## 这里运行 BP
         increments = executor.map_nodes(nodes, "commit_increment", settings)
         max_increment = max(increments, default=0.0)
         history.append({"iteration": gn, "residual_norm": float(np.sqrt(sum(costs))),

@@ -1,0 +1,371 @@
+{
+  "schema_version": "plot_collection_r5",
+  "config_kind": "experiment_suite",
+  "base_algorithm_config": "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\configs\\node_gnbp_plot\\base_node_gnbp.json",
+  "base_policy": "preserve_all_existing_values_except_explicit_semantic_overrides",
+  "algorithm_adapter": "config_adapter_contract.json",
+  "export_config": "export_plot_data_r5.json",
+  "input_policy": "use_collection_plan",
+  "deduplicate_physical_runs": true,
+  "suite_id": "joint_budget_grid",
+  "purpose": "New from r3: full 24-pair F5 final pose-error grid; inspect r3 records for reuse",
+  "budget_grid": {
+    "anchor_budgets": [
+      6,
+      8,
+      10,
+      12,
+      14,
+      16
+    ],
+    "pairwise_budgets": [
+      2,
+      4,
+      6,
+      8
+    ],
+    "combination_mode": "cartesian_product",
+    "expected_configuration_count": 24,
+    "materialization": "experiments_already_expanded_do_not_expand_again"
+  },
+  "experiments": [
+    {
+      "config_id": "bo_ka6_kp2",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 6,
+        "pairwise_budget": 2,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka6_kp4",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 6,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka6_kp6",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 6,
+        "pairwise_budget": 6,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka6_kp8",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 6,
+        "pairwise_budget": 8,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka8_kp2",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 8,
+        "pairwise_budget": 2,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka8_kp4",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 8,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka8_kp6",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 8,
+        "pairwise_budget": 6,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka8_kp8",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 8,
+        "pairwise_budget": 8,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka10_kp2",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 10,
+        "pairwise_budget": 2,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka10_kp4",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 10,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka10_kp6",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 10,
+        "pairwise_budget": 6,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka10_kp8",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 10,
+        "pairwise_budget": 8,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka12_kp2",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 2,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka12_kp4",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka12_kp6",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 6,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka12_kp8",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 12,
+        "pairwise_budget": 8,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka14_kp2",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 14,
+        "pairwise_budget": 2,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka14_kp4",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 14,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka14_kp6",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 14,
+        "pairwise_budget": 6,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka14_kp8",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 14,
+        "pairwise_budget": 8,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka16_kp2",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 16,
+        "pairwise_budget": 2,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka16_kp4",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 16,
+        "pairwise_budget": 4,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka16_kp6",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 16,
+        "pairwise_budget": 6,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    },
+    {
+      "config_id": "bo_ka16_kp8",
+      "solver_semantics": {
+        "frontend": "bo_epnp",
+        "anchor_budget": 16,
+        "pairwise_budget": 8,
+        "anchor_selection_strategy": "rank_logdet",
+        "pairwise_selection_strategy": "schur_greedy"
+      },
+      "run_mode": "existing_full_pipeline",
+      "figure_roles": [
+        "F5.final"
+      ]
+    }
+  ],
+  "implementation_baseline": "r3",
+  "revision": "r5_from_r3_2026-10-14"
+}
