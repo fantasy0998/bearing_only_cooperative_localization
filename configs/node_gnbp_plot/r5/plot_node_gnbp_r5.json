@@ -344,8 +344,6 @@
     "marker_size": 5,
     "grid_alpha": 0.2,
     "formats": [
-      "pdf",
-      "svg",
       "png"
     ],
     "dpi": 300,
