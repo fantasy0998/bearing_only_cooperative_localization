@@ -27,6 +27,10 @@ from src.node_gnbp_backend import (
     UAVNode, ObservationFactor, NodeExecutor, freeze_states, readonly, refine_nodes,
 )
 from src.selection_trace import capture
+from src.structured_tls import (
+    StructuredTLSConfig, StructuredTLSGeometry, greedy_structured_information,
+    information_metrics, validate_angle_covariances,
+)
 
 
 @dataclass(frozen=True)
@@ -63,12 +67,27 @@ class NodeGNBPConfig:
     anchor_logdet_regularization: float = 1e-8
     schur: GNBPKeypointSelectionConfig = field(default_factory=lambda:
         GNBPKeypointSelectionConfig(candidate_policy="pairwise_only", candidate_scope="full_window"))
+    record_frontend_diagnostics: bool = False
+    bo_epnp_solver: str = "legacy"
+    frontend_use_ml_refine: bool | None = None
+    structured_tls: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.record_frontend_diagnostics, bool):
+            raise ValueError("record_frontend_diagnostics must be boolean.")
         if self.initialization_method not in ("bo_epnp", "bgpnp", "sdp", "bls"):
             raise ValueError("Unknown initialization_method.")
-        if self.anchor_selection_strategy not in ("random", "uniform_time", "rank_logdet"):
+        if self.anchor_selection_strategy not in (
+                "random", "uniform_time", "rank_logdet", "legacy_logdet", "structured_tls_logdet"):
             raise ValueError("Unknown anchor_selection_strategy.")
+        if self.bo_epnp_solver not in ("legacy", "ls", "tls", "structured_tls"):
+            raise ValueError("Unknown bo_epnp_solver")
+        if self.frontend_use_ml_refine is not None and not isinstance(self.frontend_use_ml_refine, bool):
+            raise ValueError("frontend_use_ml_refine must be boolean or null")
+        StructuredTLSConfig(**self.structured_tls)
+        if self.initialization_method != "bo_epnp" and (
+                self.bo_epnp_solver != "legacy" or self.anchor_selection_strategy == "structured_tls_logdet"):
+            raise ValueError("Structured selection/BO solvers require bo_epnp initialization")
         if self.pairwise_selection_strategy not in ("random", "uniform_time", "schur_greedy"):
             raise ValueError("Unknown pairwise_selection_strategy.")
         for name in ("anchor_budget_per_node", "max_gn_iterations", "max_bp_iterations", "workers"):
@@ -126,6 +145,7 @@ class DirectedObservations:
     rotation_b3_sensor: np.ndarray | None = None
     translation_sensor: np.ndarray | None = None
     valid_mask: np.ndarray | None = None
+    angle_covariance_rad2: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         idx = np.asarray(self.absolute_indices)
@@ -149,6 +169,9 @@ class DirectedObservations:
         object.__setattr__(self, "valid_mask", mask)
         for name, value in (("bearings", self.bearings), ("rotation_b3_sensor", q), ("translation_sensor", e)):
             object.__setattr__(self, name, readonly(value))
+        if self.angle_covariance_rad2 is not None:
+            covariance = validate_angle_covariances(self.angle_covariance_rad2, len(idx))
+            object.__setattr__(self, "angle_covariance_rad2", readonly(covariance))
 
     @property
     def edge_key(self) -> str:
@@ -347,19 +370,22 @@ def _anchor_arrays(window: WindowInput, keys: list[EdgeTimeKey]) -> tuple[np.nda
     return np.asarray(world), np.asarray(local), np.asarray(bearing)
 
 
-def anchor_matrix(window: WindowInput, keys: list[EdgeTimeKey]) -> tuple[np.ndarray, dict]:
-    """Build fixed pool PCA parameterization of nonhomogeneous 2M-by-12 BO A."""
+def anchor_matrix(window: WindowInput, keys: list[EdgeTimeKey],
+                  control_point_method: str = "pca") -> tuple[np.ndarray, dict]:
+    """Build BO A using one control basis and column scaling for the whole pool."""
     world, local, bearings = _anchor_arrays(window, keys)
-    controls = BO_EPnP._select_control_points(world, method="pca")
-    weights = bgpnp.compute_alphas(world, controls)
+    controls = BO_EPnP._select_control_points(world, method=control_point_method)
+    weights = bgpnp.compute_alphas(world, controls) # the coefficient of control point
     matrix, _ = BO_EPnP._build_sphere_aware_linear_system(local, bearings, weights)
     scale = np.maximum(np.linalg.norm(matrix, axis=0), 1e-12)
     matrix = matrix / scale
+    #scale = np.ones(matrix.shape[1], dtype=float)
     # c' contains the 3 coordinates of each of 4 transformed affine controls.
     # This is A c'=b, not a homogeneous camera matrix: no scale gauge removed.
     return matrix.reshape(len(keys), 2, matrix.shape[1]), {
         "system": "nonhomogeneous_A_cprime_equals_b", "columns": matrix.shape[1],
         "effective_target_rank": matrix.shape[1], "control_points": controls.tolist(),
+        "control_point_method": control_point_method,
         "column_norm_scale": scale.tolist(), "parameterization_scope": "fixed_candidate_pool"}
 
 
@@ -370,15 +396,99 @@ def _matrix_metrics(matrix: np.ndarray, rank_tolerance: float, regularization: f
     return rank, float(np.log(padded + regularization).sum())
 
 
-def select_anchor(node: UAVNode, window: WindowInput, cfg: NodeGNBPConfig) -> list[EdgeTimeKey]:
+def structured_anchor_geometry(window: WindowInput, keys: list[EdgeTimeKey],
+                               controls: np.ndarray) -> StructuredTLSGeometry:
+    """Transport raw sensor angle derivatives and actual covariance into B3."""
+    world, local, _ = _anchor_arrays(window, keys)
+    bearings, rotations, covariance = [], [], []
+    for key in keys:
+        edge, pos = _edge_point(window, key)
+        bearings.append(edge.bearings[:, pos])
+        rotations.append(edge.rotation_b3_sensor[pos])
+        covariance.append(np.diag([edge.sigma_azimuth**2, edge.sigma_elevation**2])
+                          if edge.angle_covariance_rad2 is None else edge.angle_covariance_rad2[pos])
+    return StructuredTLSGeometry(local, np.asarray(bearings),
+        bgpnp.compute_alphas(world, controls), np.asarray(covariance),
+        np.asarray(rotations), [_key_id(k) for k in keys])
+
+
+def _select_structured_anchor(node: UAVNode, window: WindowInput, cfg: NodeGNBPConfig,
+                              fixed_keys: list[EdgeTimeKey] | None) -> list[EdgeTimeKey]:
+    """Independent new branch: fixed pool controls/reference, raw 12-D H atoms."""
+    keys = node.candidates["anchor"]
+    diagnostic = dict(strategy=cfg.anchor_selection_strategy, candidate_count=len(keys),
+                      requested_count=cfg.anchor_budget_per_node,
+                      candidate_ids=[_key_id(k) for k in keys])
+    node.diagnostics["anchor_selection"] = diagnostic
+    if len(keys) < 6:
+        raise ValueError("Structured selection requires at least six candidates")
+    world, local, bearings = _anchor_arrays(window, keys)
+    controls = BO_EPnP._select_control_points(world, method="pca")
+    weights = bgpnp.compute_alphas(world, controls)
+    a, b = BO_EPnP._build_sphere_aware_linear_system(local, bearings, weights)
+    initialization = {}
+    reference = BO_EPnP._solve_wtls(a, b, diagnostics=initialization)
+    diagnostic.update(control_points=controls.tolist(), control_point_method="pca",
+        parameterization_scope="fixed_candidate_pool", effective_target_rank=12, columns=12,
+        system="nonhomogeneous_A_cprime_equals_b", column_norm_scale=np.ones(12).tolist(),
+        reference_control_points=reference.tolist(), reference_method=(
+            "ls_wtls_scale_fallback" if initialization["fallback_weighted_ls"] else "wtls"),
+        reference_scope="all_candidates_fixed", logdet_regularization=cfg.anchor_logdet_regularization)
+    geometry = structured_anchor_geometry(window, keys, controls)
+    terms = geometry.linearize(reference, StructuredTLSConfig(**cfg.structured_tls), allow_invalid=True)
+    diagnostic.update(invalid_observation_count=len(terms["invalid"]),
+                      invalid_observations=terms["invalid"],
+                      covariance_conditions=terms["covariance_condition"].tolist())
+    atoms = terms["information"]
+    if not np.any(terms["valid"]):
+        raise ValueError("No valid structured information contributions")
+    rank_scale = float(np.linalg.eigvalsh(atoms.sum(axis=0))[-1])
+    diagnostic["rank_tolerance"] = cfg.anchor_rank_rtol * rank_scale
+    diagnostic["pool_rank"] = information_metrics(atoms.sum(axis=0), cfg.anchor_rank_rtol,
+        cfg.anchor_logdet_regularization, rank_scale)["rank"]
+    if fixed_keys is None:
+        selected, history = greedy_structured_information(atoms, terms["valid"],
+            min(len(keys), cfg.anchor_budget_per_node), cfg.anchor_rank_rtol,
+            cfg.anchor_logdet_regularization)
+        chosen = [keys[i] for i in selected]
+    else:
+        chosen = list(fixed_keys)
+        selected = [keys.index(k) for k in chosen]
+        if not np.all(terms["valid"][selected]):
+            raise ValueError("Fixed reference contains invalid structured observations")
+        history = []
+        diagnostic["selection_mode"] = "fixed_reference"
+    trace = node.diagnostics.get("selection_trace")
+    capture(trace, "anchor", None, {}, {}, source="structured_tls_logdet")
+    for step in history:
+        step["id"] = _key_id(keys[step["index"]])
+        capture(trace, "anchor", keys[step["index"]], {}, step,
+                source="structured_tls_logdet")
+    final = information_metrics(atoms[selected].sum(axis=0), cfg.anchor_rank_rtol,
+                                cfg.anchor_logdet_regularization, rank_scale)
+    diagnostic.update(history=history, selected_ids=[_key_id(k) for k in chosen],
+        selected_count=len(chosen), selected_rank=final["rank"], logdet=final["logdet"],
+        information_metrics=final, budget_shortfall_reason=(
+            "insufficient_valid_candidates" if len(chosen) < cfg.anchor_budget_per_node else None))
+    node.selected["anchor"] = chosen
+    if final["rank"] < 12:
+        raise ValueError(f"Structured anchor information rank insufficient: {final['rank']}/12")
+    return chosen
+
+
+def select_anchor(node: UAVNode, window: WindowInput, cfg: NodeGNBPConfig,
+                  fixed_keys: list[EdgeTimeKey] | None = None) -> list[EdgeTimeKey]:
     """Share the anchor budget across all visible anchors; never repair random sets."""
+    if cfg.anchor_selection_strategy == "structured_tls_logdet":
+        return _select_structured_anchor(node, window, cfg, fixed_keys)
     keys = node.candidates["anchor"]
     diagnostic = {"strategy": cfg.anchor_selection_strategy, "candidate_count": len(keys),
                   "requested_count": cfg.anchor_budget_per_node, "history": []}
     node.diagnostics["anchor_selection"] = diagnostic
     if len(keys) < 6:
         raise ValueError(f"Insufficient anchor candidates: {len(keys)} < 6 (12 nonhomogeneous unknowns).")
-    blocks, description = anchor_matrix(window, keys)
+    control_method = "pca" if cfg.initialization_method == "bo_epnp" else "fixed"
+    blocks, description = anchor_matrix(window, keys, control_point_method=control_method)
     full = blocks.reshape(-1, blocks.shape[-1])
     tolerance = cfg.anchor_rank_rtol * max(1., np.linalg.norm(full, 2))
     diagnostic.update(description, rank_tolerance=tolerance,
@@ -386,7 +496,13 @@ def select_anchor(node: UAVNode, window: WindowInput, cfg: NodeGNBPConfig) -> li
     diagnostic["pool_rank"] = _matrix_metrics(full, tolerance, cfg.anchor_logdet_regularization)[0]
     count = min(len(keys), cfg.anchor_budget_per_node)
     trace = node.diagnostics.get("selection_trace")
-    if cfg.anchor_selection_strategy == "rank_logdet":
+    if fixed_keys is not None:
+        chosen = list(fixed_keys)
+        diagnostic["selection_mode"] = "fixed_reference"
+        capture(trace, "anchor", None, {}, {}, source="fixed_reference")
+        for key in chosen:
+            capture(trace, "anchor", key, {}, {}, source="fixed_reference")
+    elif cfg.anchor_selection_strategy in ("rank_logdet", "legacy_logdet"):
         remaining, selected = list(range(len(keys))), []
         current_score = (0, float(full.shape[1] * np.log(cfg.anchor_logdet_regularization)))
         capture(trace, "anchor", None, {},
@@ -425,12 +541,36 @@ def select_anchor(node: UAVNode, window: WindowInput, cfg: NodeGNBPConfig) -> li
     return chosen
 
 
-def solve_frontend(window: WindowInput, keys: list[EdgeTimeKey], method: str) -> kernel.PoseState:
+def solve_frontend(window: WindowInput, keys: list[EdgeTimeKey], method: str,
+                   diagnostics: dict | None = None,
+                   control_points_world: np.ndarray | None = None,
+                   config: NodeGNBPConfig | None = None) -> kernel.PoseState:
     """Concatenate common-world anchor correspondences for the existing frontends."""
     world, local, bearings = _anchor_arrays(window, keys)
     if method == "bo_epnp":
-        rotation, translation = BO_EPnP.solve(world, local, bearings, use_wtls=True,
-                                             use_ml_refine=True, control_point_method="pca")
+        if control_points_world is None:
+            raise ValueError("BO frontend requires candidate-pool control_points_world")
+        options = {"diagnostics": diagnostics} if diagnostics is not None else {}
+        use_ml = True
+        if config is not None:
+            use_ml = (config.bo_epnp_solver != "structured_tls"
+                      if config.frontend_use_ml_refine is None else config.frontend_use_ml_refine)
+            if config.bo_epnp_solver != "legacy":
+                options["linear_solver"] = config.bo_epnp_solver
+            if config.bo_epnp_solver == "structured_tls":
+                options.update(structured_geometry=structured_anchor_geometry(window, keys, control_points_world),
+                               structured_tls_options=config.structured_tls)
+        rotation, translation = BO_EPnP.solve(world, local, bearings, use_wtls=False,
+                                             use_ml_refine=use_ml, control_point_method="pca",
+                                             control_points_world=control_points_world, **options)
+        if diagnostics is not None:
+            diagnostics.update(selected_ids=[_key_id(k) for k in keys],
+                               control_point_scope="candidate_pool",
+                               measurement_frame="B3", state_convention="world_to_local",
+                               ml_noise_source="legacy_defaults_not_dataset_sigmas")
+            if config is not None and config.bo_epnp_solver == "structured_tls":
+                diagnostics["structured_tls_noise_source"] = "actual_sensor_angle_covariance_rad2"
+                diagnostics["structured_tls_measurement_frame"] = "B3_with_transported_sensor_derivatives"
     elif method == "bgpnp":
         (rotation, translation, _), _ = bgpnp.solve(world, local, bearings, sol_iter=True, enforce_manifold=True)
     elif method in ("sdp", "bls"):
@@ -438,6 +578,8 @@ def solve_frontend(window: WindowInput, keys: list[EdgeTimeKey], method: str) ->
         (rotation, translation), _ = solve(world.T, local.T, bearings.T)
     else:
         raise ValueError(f"Unsupported frontend: {method}")
+    if diagnostics is not None and method != "bo_epnp":
+        diagnostics.update(status="unsupported_method", method=method)
     state = kernel.PoseState(np.asarray(rotation, dtype=float), np.asarray(translation, dtype=float).reshape(3))
     if (not np.all(np.isfinite(state.rotation)) or not np.all(np.isfinite(state.translation))
             or not np.allclose(state.rotation.T @ state.rotation, np.eye(3), atol=1e-6)
@@ -448,16 +590,33 @@ def solve_frontend(window: WindowInput, keys: list[EdgeTimeKey], method: str) ->
 
 def initialize_node(node: UAVNode, payload: tuple) -> None:
     """Run exactly one configured solver; failure leaves the node uninitialized."""
-    window, cfg = payload
+    window, cfg, *override = payload
     started = time.perf_counter()
     node.diagnostics["initialization"] = {"method": cfg.initialization_method, "success": False,
         "frontend_measurement_model": "existing_B3_frontend; BO_ML_uses_legacy_default_diagonal_noise"}
+    if cfg.bo_epnp_solver == "structured_tls":
+        node.diagnostics["initialization"]["frontend_measurement_model"] = (
+            "structured_B3_constraints_with_actual_sensor_angle_covariance")
     try:
         selection_start = time.perf_counter()
-        chosen = select_anchor(node, window, cfg)
+        fixed = override[0][node.node_id]["anchor"] if override else None
+        chosen = select_anchor(node, window, cfg, fixed_keys=fixed)
         node.diagnostics["anchor_selection_seconds"] = time.perf_counter() - selection_start
         solve_start = time.perf_counter()
-        node.state = solve_frontend(window, chosen, cfg.initialization_method)
+        frontend_options = {}
+        if cfg.initialization_method == "bo_epnp":
+            frontend_options["control_points_world"] = np.asarray(
+                node.diagnostics["anchor_selection"]["control_points"], dtype=float)
+            if (cfg.bo_epnp_solver != "legacy" or cfg.frontend_use_ml_refine is not None):
+                frontend_options["config"] = cfg
+        if cfg.record_frontend_diagnostics or cfg.bo_epnp_solver == "structured_tls":
+            node.diagnostics["frontend_solver"] = {}
+            node.state = solve_frontend(window, chosen, cfg.initialization_method,
+                                        diagnostics=node.diagnostics["frontend_solver"],
+                                        **frontend_options)
+        else:
+            node.state = solve_frontend(window, chosen, cfg.initialization_method,
+                                        **frontend_options)
         node.initial_state = node.state.copy()
         node.diagnostics["frontend_seconds"] = time.perf_counter() - solve_start
         node.diagnostics["initialization"]["success"] = True
@@ -470,6 +629,8 @@ def initialize_node(node: UAVNode, payload: tuple) -> None:
         node.state = node.initial_state = None
         node.owned_factors.clear()
         node.diagnostics["initialization"]["reason"] = f"{type(error).__name__}: {error}"
+        if "frontend_solver" in node.diagnostics:
+            node.diagnostics["frontend_solver"].update(status="failed", error=f"{type(error).__name__}: {error}")
     node.diagnostics["initialization_seconds"] = time.perf_counter() - started
 
 
@@ -520,7 +681,7 @@ def base_information(node: UAVNode, payload: tuple) -> np.ndarray:
 
 def select_pairwise(node: UAVNode, payload: tuple) -> None:
     """Select only owned extra measurements against immutable initial base blocks."""
-    window, cfg, states, base = payload
+    window, cfg, states, base, *override = payload
     started = time.perf_counter()
     selection_cfg = replace(cfg.schur, extra_factors_per_node=cfg.pairwise_budget_per_node)
     scale = np.diag([1., 1., 1., *([selection_cfg.translation_scale] * 3)])
@@ -536,7 +697,17 @@ def select_pairwise(node: UAVNode, payload: tuple) -> None:
             rejected.append({"id": _key_id(key), "reason": str(error)})
     build_seconds = time.perf_counter() - started
     score_started = time.perf_counter()
-    if cfg.pairwise_selection_strategy == "schur_greedy":
+    if override:
+        chosen = list(override[0][node.node_id]["pairwise"])
+        if any(key not in candidates for key in chosen):
+            raise ValueError("Fixed pairwise selection contains geometry-rejected observations")
+        diagnostic = {"selection_mode": "fixed_reference", "trial_score_count": 0,
+                      "stop_reason": "fixed_reference"}
+        trace = node.diagnostics.get("selection_trace")
+        capture(trace, "pairwise", None, {}, {}, source="fixed_reference")
+        for key in chosen:
+            capture(trace, "pairwise", key, {}, {}, source="fixed_reference")
+    elif cfg.pairwise_selection_strategy == "schur_greedy":
         for key, factor in candidates.items():
             ## 建立待估节点之间的信息矩阵
             info = kernel._linearize_pairwise_factor(factor, states)
@@ -600,9 +771,14 @@ class NodeWindowResult:
 
 
 def solve_window(window: WindowInput, config: NodeGNBPConfig | None = None,
-                 *, trace_selection: bool = False) -> NodeWindowResult:
+                 *, trace_selection: bool = False,
+                 fixed_selection: dict | None = None) -> NodeWindowResult:
     """Execute all initialization barriers before selection/BP; no hidden fallback."""
     cfg = config or NodeGNBPConfig()
+    fixed = None
+    if fixed_selection is not None:
+        from src.node_selection_replay import validate_selection_ids
+        fixed = validate_selection_ids(window, cfg, fixed_selection)
     started = time.perf_counter()
     nodes = {key: UAVNode(key, local_trajectory=window.estimated_position_local[key]) for key in window.estimated_ids}
     if trace_selection: ## 是否详细记录选点过程的开关，主要用于绘图时显示贪心打分函数的变化情况
@@ -631,7 +807,16 @@ def solve_window(window: WindowInput, config: NodeGNBPConfig | None = None,
         for name, operation in (("segmentation", segment_node), ("initialization", initialize_node)):
             ## 在这针对每个点执行轨迹分段并得到与锚节点观测的初始化位姿 
             stage_started = time.perf_counter()
-            executor.map_nodes(nodes, operation, (window, cfg))
+            payload = (window, cfg, fixed) if name == "initialization" and fixed is not None else (window, cfg)
+            executor.map_nodes(nodes, operation, payload)
+            if name == "segmentation" and fixed is not None:
+                for node_id, node in nodes.items():
+                    for stage, keys in fixed[node_id].items():
+                        for key in keys:
+                            valid = node.segments[f"{key.observer_id}_{key.target_id}"]["valid_absolute_indices"]
+                            if key.time_index not in valid:
+                                raise ValueError(f"Fixed selection contains invalid observation: {key}")
+                        node.candidates[stage] = sorted(set(node.candidates[stage]) | set(keys))
             if name == "initialization":
                 initial_ready = time.perf_counter() - started
             record["timings"][name + "_wall_seconds"] = time.perf_counter() - stage_started
@@ -648,7 +833,8 @@ def solve_window(window: WindowInput, config: NodeGNBPConfig | None = None,
                 bases = executor.map_nodes(nodes, base_information, (states, readonly(scale)))
                 base = MappingProxyType(dict(zip(sorted(nodes), bases)))
                 ## 选点
-                executor.map_nodes(nodes, select_pairwise, (window, cfg, states, base))
+                payload = (window, cfg, states, base) + ((fixed,) if fixed is not None else ())
+                executor.map_nodes(nodes, select_pairwise, payload)
                 record["timings"]["pairwise_selection_wall_seconds"] = time.perf_counter() - stage_started
                 record["status"] = "backend_failed"
                 record["backend"] = refine_nodes(nodes, executor=executor, settings=cfg.backend_settings(),
@@ -669,4 +855,8 @@ def solve_window(window: WindowInput, config: NodeGNBPConfig | None = None,
         if name in ("segmentation_seconds", "initialization_seconds", "pairwise_selection_seconds")) for n in nodes.values())
     record["timings"]["end_to_end_wall_seconds"] = time.perf_counter() - started
     record["recording"] = {"selection_trace_enabled": trace_selection}
+    if fixed is not None:
+        record["selection_replay"] = {"mode": "fixed_reference",
+            "selection_sha256": hashlib.sha256(json.dumps(fixed_selection, sort_keys=True).encode()).hexdigest(),
+            "selected_ids": fixed_selection, "values_source": "current_input_observations"}
     return NodeWindowResult(nodes, record)

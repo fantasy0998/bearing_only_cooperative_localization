@@ -35,11 +35,16 @@ class BO_EPnP:
         xyz: np.ndarray,
         bearing: np.ndarray,
         use_wtls: bool = False,
-        use_ml_refine: bool = True,
-        control_point_method: str = "pca",
-        sigma_azimuth: float = np.deg2rad(0.5),
-        sigma_elevation: float = np.deg2rad(2.0),
+        use_ml_refine: Optional[bool] = None,
+        control_point_method: str = "fixed",
+        sigma_azimuth: float = np.deg2rad(0.3),
+        sigma_elevation: float = np.deg2rad(0.5),
         R_ins_to_body: Optional[np.ndarray] = None,
+        diagnostics: Optional[dict] = None,
+        control_points_world: Optional[np.ndarray] = None,
+        linear_solver: Optional[str] = None,
+        structured_geometry: Optional[object] = None,
+        structured_tls_options: Optional[dict] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Solve pose (R, t) from bearing-only correspondences.
@@ -49,37 +54,124 @@ class BO_EPnP:
             xyz: 3D points in local frame, shape (3, n) or (n, 3)
             bearing: bearing vectors, shape (3, n) or (n, 3)
             use_wtls: if True, use weighted TLS for linear stage
-            use_ml_refine: if True, run nonlinear ML-style refinement
-            control_point_method: "pca" or "fixed"
+            use_ml_refine: None preserves legacy ML on, but defaults to off for
+                           linear_solver="structured_tls". True explicitly enables ML.
+            control_point_method: "fixed" (BGPnP controls, default) or explicit "pca"
             sigma_azimuth: azimuth noise std (rad) for ML likelihood weighting
             sigma_elevation: elevation noise std (rad) for ML likelihood weighting
             R_ins_to_body: known rotation from INS-frame vector to body-fixed vector.
                            If None, identity is used (i.e., bearing is already body-fixed).
+            diagnostics: optional output dictionary for copied solver intermediates
+                         and ML function evaluations; None disables recording.
+            control_points_world: optional (4,3) world-frame controls computed by
+                                  the caller; reused without recomputing PCA.
+            linear_solver: None uses use_wtls; or "ls", "tls", "structured_tls".
+            structured_geometry: fixed sensor derivatives/covariance/weights for
+                                 the exact supplied controls and observations.
+            structured_tls_options: StructuredTLSConfig field overrides.
 
         Returns:
             (R, t): rotation matrix (3,3) and translation vector (3,)
         """
+        if use_ml_refine is None:
+            use_ml_refine = linear_solver != "structured_tls"
         uvw_n3 = BO_EPnP._to_row_points(uvw)
         xyz_n3 = BO_EPnP._to_row_points(xyz)
         bearing_n3 = BO_EPnP._normalize_bearings(BO_EPnP._to_row_points(bearing))
         BO_EPnP._validate_inputs(uvw_n3, xyz_n3, bearing_n3)
+        if diagnostics is not None:
+            diagnostics.clear()
+            diagnostics.update(schema_version=1, status="started",
+                               use_wtls=use_wtls, use_ml_refine=use_ml_refine,
+                               control_point_method=control_point_method,
+                               world_points=uvw_n3.tolist(), local_points=xyz_n3.tolist(),
+                               bearings=bearing_n3.tolist())
 
-        control_points = BO_EPnP._select_control_points(uvw_n3, method=control_point_method)
+        if control_points_world is None:
+            control_points = BO_EPnP._select_control_points(uvw_n3, method=control_point_method)
+        else:
+            control_points = np.array(control_points_world, dtype=float, copy=True)
+            if control_points.shape != (4, 3) or not np.all(np.isfinite(control_points)):
+                raise ValueError("control_points_world must be a finite (4,3) array")
+            if np.linalg.matrix_rank(control_points[1:] - control_points[0]) < 3:
+                raise ValueError("control_points_world must be affinely independent")
+        if diagnostics is not None:
+            diagnostics["control_point_source"] = (
+                "provided" if control_points_world is not None else "computed")
         weights = bgpnp.compute_alphas(uvw_n3, control_points)
 
-        A, b = BO_EPnP._build_sphere_aware_linear_system(xyz_n3, bearing_n3, weights)
+        linear_record = {} if diagnostics is not None else None
+        linear_options = {"diagnostics": linear_record} if diagnostics is not None else {}
+        A, b = BO_EPnP._build_sphere_aware_linear_system(xyz_n3, bearing_n3, weights, **linear_options)
+        if diagnostics is not None:
+            diagnostics.update(control_points=control_points.tolist(),
+                               barycentric_weights=weights.tolist(), linear=linear_record)
+            centered = uvw_n3 - np.mean(uvw_n3, axis=0)
+            diagnostics["world_point_covariance_eigenvalues_descending"] = np.linalg.eigvalsh(
+                centered.T @ centered / max(len(uvw_n3) - 1, 1))[::-1].tolist()
 
+        if linear_solver not in (None, "ls", "tls", "structured_tls"):
+            raise ValueError("Unknown BO linear_solver")
+        if linear_solver in ("tls", "structured_tls"):
+            use_wtls = True
+        elif linear_solver == "ls":
+            use_wtls = False
+        if diagnostics is not None and linear_solver is not None:
+            diagnostics.update(linear_solver=linear_solver, use_wtls=use_wtls)
         if use_wtls:
-            c_prime = BO_EPnP._solve_wtls(A, b)
+            tls_record = {} if diagnostics is not None or linear_solver == "structured_tls" else None
+            tls_options = {"diagnostics": tls_record} if tls_record is not None else {}
+            if diagnostics is not None:
+                diagnostics["tls"] = tls_record
+            c_prime = BO_EPnP._solve_wtls(A, b, **tls_options)
         else:
             c_prime = BO_EPnP._solve_ls(A, b)
 
+        if linear_solver == "structured_tls":
+            from src.structured_tls import StructuredTLSConfig, solve_structured_tls
+
+            if structured_geometry is None:
+                raise ValueError("Structured TLS requires sensor-frame geometry and covariance")
+            expected_m = np.array([np.kron(w, np.eye(3)) for w in weights])
+            expected_p = np.eye(3) - bearing_n3[:, :, None] * bearing_n3[:, None, :]
+            if (structured_geometry.m.shape != expected_m.shape
+                    or not np.allclose(structured_geometry.m, expected_m, rtol=1e-12, atol=1e-12)
+                    or not np.allclose(structured_geometry.local, xyz_n3, rtol=1e-12, atol=1e-12)
+                    or not np.allclose(structured_geometry.p, expected_p, rtol=1e-12, atol=1e-12)):
+                raise ValueError("Structured geometry does not match controls, local points or bearings")
+            stls_record = {}
+            if diagnostics is not None:
+                diagnostics["structured_tls"] = stls_record
+            try:
+                # Ask the existing WTLS implementation which initializer it used.
+                stls_record["initialization_method"] = (
+                    "ls_wtls_scale_fallback" if tls_record["fallback_weighted_ls"] else "wtls")
+                result = solve_structured_tls(
+                    structured_geometry, c_prime,
+                    config=StructuredTLSConfig(**(structured_tls_options or {})),
+                    diagnostics=stls_record)
+                c_prime = result.controls
+                if not result.diagnostics["converged"] and diagnostics is None:
+                    raise ValueError("Structured TLS did not converge: " + result.diagnostics["status"])
+            except (ValueError, np.linalg.LinAlgError) as error:
+                stls_record.update(status="failed", error=str(error), converged=False)
+                raise
+
         C_prime = c_prime.reshape(4, 3)
-        R, t = BO_EPnP._recover_pose(control_points, C_prime)
+        recovery_record = {} if diagnostics is not None else None
+        recovery_options = {"diagnostics": recovery_record} if diagnostics is not None else {}
+        R, t = BO_EPnP._recover_pose(control_points, C_prime, **recovery_options)
+        if diagnostics is not None:
+            diagnostics.update(estimated_control_points=C_prime.tolist(), recovery=recovery_record,
+                               pre_ml_pose={"rotation": R.tolist(), "translation": t.tolist()})
 
         if use_ml_refine:
             if R_ins_to_body is None:
                 R_ins_to_body = np.eye(3)
+            ml_record = {} if diagnostics is not None else None
+            ml_options = {"diagnostics": ml_record} if diagnostics is not None else {}
+            if diagnostics is not None:
+                diagnostics["ml"] = ml_record
             R, t = BO_EPnP._ml_refinement_russell(
                 uvw_n3=uvw_n3,
                 xyz_n3=xyz_n3,
@@ -89,8 +181,11 @@ class BO_EPnP:
                 sigma_azimuth=sigma_azimuth,
                 sigma_elevation=sigma_elevation,
                 R_ins_to_body=R_ins_to_body,
+                **ml_options,
             )
 
+        if diagnostics is not None:
+            diagnostics.update(status="completed", final_pose={"rotation": R.tolist(), "translation": t.tolist()})
         return R, t
 
     # NEW FUNCTION (not in original library): robust input orientation unifier.
@@ -129,12 +224,12 @@ class BO_EPnP:
             raise ValueError("Inputs contain NaN or Inf")
 
     @staticmethod
-    def _select_control_points(points_n3: np.ndarray, method: str = "pca") -> np.ndarray:
+    def _select_control_points(points_n3: np.ndarray, method: str = "fixed") -> np.ndarray:
         """
         Select 4 control points.
 
         method:
-        - "fixed": reuse repository fixed control points (for compatibility)
+        - "fixed": reuse BGPnP world-frame control points, independent of input subset
         - "pca": EPnP-like adaptive control points
         """
         if method == "fixed":
@@ -167,7 +262,8 @@ class BO_EPnP:
     # NEW FUNCTION (not in original library): sphere-aware linear system assembly.
     @staticmethod
     def _build_sphere_aware_linear_system(
-        xyz_n3: np.ndarray, bearing_n3: np.ndarray, weights_n4: np.ndarray
+        xyz_n3: np.ndarray, bearing_n3: np.ndarray, weights_n4: np.ndarray,
+        diagnostics: Optional[dict] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Build linear system with orthogonal projection:
@@ -180,6 +276,8 @@ class BO_EPnP:
         A = np.zeros((2 * n, 12))
         b = np.zeros((2 * n,))
         eye3 = np.eye(3)
+        if diagnostics is not None:
+            diagnostics["selected_projection_rows"] = []
 
         for i in range(n):
             q = bearing_n3[i]
@@ -190,9 +288,13 @@ class BO_EPnP:
 
             row_norms = np.linalg.norm(A_i, axis=1)
             keep = np.argsort(row_norms)[-2:]
+            if diagnostics is not None:
+                diagnostics["selected_projection_rows"].append(keep.tolist())
             A[2 * i : 2 * i + 2, :] = A_i[keep, :]
             b[2 * i : 2 * i + 2] = b_i[keep]
 
+        if diagnostics is not None:
+            diagnostics.update(A=A.tolist(), b=b.tolist())
         return A, b
 
     @staticmethod
@@ -210,7 +312,8 @@ class BO_EPnP:
 
     # NEW FUNCTION (not in original library): weighted TLS solver for EIV.
     @staticmethod
-    def _solve_wtls(A: np.ndarray, b: np.ndarray, row_weights: Optional[np.ndarray] = None) -> np.ndarray:
+    def _solve_wtls(A: np.ndarray, b: np.ndarray, row_weights: Optional[np.ndarray] = None,
+                    diagnostics: Optional[dict] = None) -> np.ndarray:
         """
         Weighted TLS by row-whitening + SVD on augmented system [A|b].
 
@@ -234,17 +337,29 @@ class BO_EPnP:
         # Six correspondences give A=(12,12), Z=(12,13). Reduced SVD omits
         # Z's right null vector in this wide case and returns a nonzero singular
         # direction instead, producing a spurious WTLS pose at the minimum budget.
-        _, _, vt = np.linalg.svd(Z, full_matrices=Z.shape[0] < Z.shape[1])
+        _, singular, vt = np.linalg.svd(Z, full_matrices=Z.shape[0] < Z.shape[1])
         v = vt[-1, :]
         denom = v[-1]
+        if diagnostics is not None:
+            diagnostics.update(row_weights=w.tolist(), A_w=Aw.tolist(), b_w=bw.tolist(),
+                               augmented_matrix=Z.tolist(), singular_values=singular.tolist(),
+                               singular_value_count=len(singular),
+                               wide_matrix_nullspace=bool(Z.shape[0] < Z.shape[1]),
+                               right_solution_vector=v.tolist(), denominator=float(denom),
+                               fallback_weighted_ls=bool(np.abs(denom) < 1e-12))
 
         if np.abs(denom) < 1e-12:
             logger.warning("WTLS degenerate scale detected, fallback to weighted LS.")
-            return np.linalg.lstsq(Aw, bw, rcond=None)[0]
-        return -v[:-1] / denom
+            solution = np.linalg.lstsq(Aw, bw, rcond=None)[0]
+        else:
+            solution = -v[:-1] / denom
+        if diagnostics is not None:
+            diagnostics["solution"] = solution.tolist()
+        return solution
 
     @staticmethod
-    def _recover_pose(C: np.ndarray, C_prime: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def _recover_pose(C: np.ndarray, C_prime: np.ndarray,
+                      diagnostics: Optional[dict] = None) -> Tuple[np.ndarray, np.ndarray]:
         """
         Recover pose from 3D-3D alignment:
             C_prime ~= R * C + t
@@ -254,12 +369,17 @@ class BO_EPnP:
         X = C - mu_c
         Y = C_prime - mu_cp
         H = X.T @ Y
-        U, _, Vt = np.linalg.svd(H)
+        U, singular, Vt = np.linalg.svd(H)
         R = Vt.T @ U.T
+        if diagnostics is not None:
+            diagnostics.update(cross_matrix=H.tolist(), singular_values=singular.tolist(),
+                               reflection_corrected=bool(np.linalg.det(R) < 0))
         if np.linalg.det(R) < 0:
             Vt[-1, :] *= -1
             R = Vt.T @ U.T
         t = mu_cp - R @ mu_c
+        if diagnostics is not None:
+            diagnostics["alignment_residuals"] = (C_prime - ((R @ C.T).T + t)).tolist()
         return R, t
 
     # NEW FUNCTION (not in original library): explicit ML-style SE(3) refinement.
@@ -311,6 +431,7 @@ class BO_EPnP:
         sigma_elevation: float,
         R_ins_to_body: np.ndarray,
         max_nfev: int = 120,
+        diagnostics: Optional[dict] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         ML refinement aligned with Russell et al. (TAES 2020, Section V):
@@ -331,6 +452,13 @@ class BO_EPnP:
         b_meas_body = (R_ins_to_body @ bearing_n3.T).T
         b_meas_body = BO_EPnP._normalize_bearings(b_meas_body)
         az_meas, el_meas = BO_EPnP._bearing_to_az_el(b_meas_body)
+        if diagnostics is not None:
+            diagnostics.update(sigma_azimuth_rad=float(sigma_azimuth),
+                               sigma_elevation_rad=float(sigma_elevation),
+                               R_ins_to_body=R_ins_to_body.tolist(), method="lm", max_nfev=max_nfev,
+                               initial_pose={"rotation": R_init.tolist(), "translation": t_init.tolist()},
+                               trace_semantics="function_evaluations_not_accepted_iterations",
+                               residual_evaluations=[], jacobian_evaluations=[])
 
         def residual(delta: np.ndarray) -> np.ndarray:
             omega = delta[:3]
@@ -354,7 +482,12 @@ class BO_EPnP:
             # Negative log-likelihood under independent Gaussian noise -> weighted LS.
             r_az = d_az / sigma_azimuth
             r_el = d_el / sigma_elevation
-            return np.column_stack([r_az, r_el]).reshape(-1)
+            value = np.column_stack([r_az, r_el]).reshape(-1)
+            if diagnostics is not None:
+                diagnostics["residual_evaluations"].append(
+                    {"delta": delta.tolist(), "residual": value.tolist(),
+                     "cost": float(0.5 * np.dot(value, value))})
+            return value
 
         # NEW FUNCTION (not in original library): analytic Jacobian for Russell-style residual.
         def jacobian(delta: np.ndarray) -> np.ndarray:
@@ -417,11 +550,20 @@ class BO_EPnP:
                 Ji = J_w @ J_ang @ R_ins_to_body @ J_norm @ J_u
                 J[2 * i : 2 * i + 2, :] = Ji
 
+            if diagnostics is not None:
+                diagnostics["jacobian_evaluations"].append({"delta": delta.tolist(), "jacobian": J.tolist()})
             return J
 
         x0 = np.zeros(6, dtype=float)
         # LM with analytic Jacobian for faster and more stable convergence.
         res = least_squares(residual, x0, jac=jacobian, method="lm", max_nfev=max_nfev)
+        if diagnostics is not None:
+            diagnostics.update(success=bool(res.success), status=int(res.status), message=str(res.message),
+                               nfev=int(res.nfev), njev=None if res.njev is None else int(res.njev),
+                               optimality=float(res.optimality), final_cost=float(res.cost),
+                               final_delta=res.x.tolist(), final_residual=res.fun.tolist(),
+                               final_jacobian=res.jac.tolist(), final_gradient=res.grad.tolist(),
+                               initial_cost=diagnostics["residual_evaluations"][0]["cost"])
         dR = BO_EPnP._se3_so3_exp(res.x[:3])
         R_ref = dR @ R_init
         t_ref = t_init + res.x[3:]

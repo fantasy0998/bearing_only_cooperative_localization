@@ -94,8 +94,15 @@ def load_npz_inputs(path: Path, *, measurement_mode: str = "b4",
             mask = observations.get("edge_valid_masks", {}).get(key)
             if mask is not None and len(mask) == length and len(indices) != length:
                 mask = np.asarray(mask)[indices]
+            covariance = observations.get("angle_covariance_rad2", {}).get(key)
+            if covariance is None and "angle_covariance_rad2" in raw.files:
+                covariance = np.asarray(raw["angle_covariance_rad2"])
+            if covariance is not None:
+                covariance = np.asarray(covariance)
+                if covariance.shape == (length, 2, 2) and len(indices) != length:
+                    covariance = covariance[indices]
             edges.append(DirectedObservations(i,j, np.asarray(indices), b, sigma_az, sigma_el,
-                                              q, valid_mask=mask))
+                                              q, valid_mask=mask, angle_covariance_rad2=covariance))
         arguments = dict(node_ids=nodes, anchor_ids=anchors, estimated_ids=estimated,
             observation_adjacency=adjacency, timestamps=ts,
             anchor_position_world=observations["anchor_position_w"],
@@ -218,14 +225,20 @@ def _provenance() -> dict:
             for path in (root / "src").glob("*.py") if path.name in (
                 "exp_node_gnbp.py", "boepnp_gnbp_nodes.py", "node_gnbp_backend.py", "bearing_segmentation.py",
                 "gnbp_keypoint_selection.py", "multi_agent_bearing_gabp.py", "bo_epnp_solver.py", "bgPnp_GABP.py", "bearing_only_solver.py",
-                "selection_trace.py")}}
+                "selection_trace.py", "node_selection_replay.py")}}
 
 
 def main() -> None:
     """Run explicit windows/budget scans on existing input files."""
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--analyze-first-stage", action=argparse.BooleanOptionalAction,
+                        default=False, help="Export extra first-stage TLS/pre-ML/ML analysis tables")
+    parser.add_argument("--record-frontend-diagnostics", action=argparse.BooleanOptionalAction,
+                        default=None, help="Record BO-EPnP TLS, pre-ML pose and ML evaluations; default off")
     parser.add_argument("--observations", type=Path, nargs="+", required=True)
     parser.add_argument("--config", type=Path)
+    parser.add_argument("--selection-reference", type=Path,
+                        help="Replay exact anchor/pairwise IDs from matching original records.json")
     parser.add_argument("--methods-config", type=Path, help="Explicit JSON list of config overrides; no automatic strategy Cartesian product")
     parser.add_argument("--graph-config", type=Path, help="JSON node_ids/anchor_ids/estimated_ids/observation_adjacency")
     parser.add_argument("--output-root", type=Path, default=Path("data/node_gnbp"))
@@ -244,7 +257,7 @@ def main() -> None:
     for name in ("max-angle-deg", "candidate-multiplier", "max-time-gap-s"):
         parser.add_argument("--"+name, type=float)
     for name, choices in (("initialization-method", ["bo_epnp", "bgpnp", "sdp", "bls"]),
-        ("anchor-selection-strategy", ["random", "uniform_time", "rank_logdet"]),
+        ("anchor-selection-strategy", ["random", "uniform_time", "rank_logdet", "legacy_logdet", "structured_tls_logdet"]),
         ("pairwise-selection-strategy", ["random", "uniform_time", "schur_greedy"]),
         ("executor", ["serial", "thread"])):
         parser.add_argument("--"+name, choices=choices)
@@ -277,6 +290,13 @@ def main() -> None:
     if args.window_size < 1 or any(i < 0 for i in args.window_starts):
         parser.error("Windows require a positive size and nonnegative starts.")
     records, provenance = [], _provenance()
+    reference_records = None
+    reference_inputs = {}
+    if args.selection_reference:
+        reference_records = json.loads(args.selection_reference.read_text(encoding="utf-8"))
+        provenance["selection_reference"] = {
+            "path": str(args.selection_reference.resolve()),
+            "sha256": hashlib.sha256(args.selection_reference.read_bytes()).hexdigest()}
     export_windows = []
     run_started = time.perf_counter()
     for path in args.observations:
@@ -300,18 +320,39 @@ def main() -> None:
                 budgets = list(itertools.product(method_cfg.anchor_budget_values, method_cfg.pairwise_budget_values)) if args.scan_budgets else [(method_cfg.anchor_budget_per_node, method_cfg.pairwise_budget_per_node)]
                 runs.extend(replace(method_cfg, anchor_budget_per_node=a, pairwise_budget_per_node=p) for a,p in budgets)
             for run_cfg in runs:
+                if args.analyze_first_stage:
+                    run_cfg = replace(run_cfg, record_frontend_diagnostics=True)
+                fixed = None
+                if reference_records is not None:
+                    from src.node_selection_replay import reference_selection, validate_geometry
+                    fixed, source = reference_selection(reference_records, run_cfg, window)
+                    source_path = source["dataset"]["observation_path"]
+                    if source_path not in reference_inputs:
+                        ref_inputs, _, ref_meta = load_npz_inputs(Path(source_path),
+                            measurement_mode=args.measurement_mode,
+                            input_adjacency_convention=args.input_adjacency_convention)
+                        if ref_meta["sha256"] != source["dataset"]["sha256"]:
+                            raise ValueError("Selection reference observation file has changed")
+                        reference_inputs[source_path] = ref_inputs
+                    validate_geometry(reference_inputs[source_path], inputs)
                 result = solve_window(
                     window, run_cfg,
-                    trace_selection=recording_options.get("trace_selection", False))
+                    trace_selection=recording_options.get("trace_selection", False),
+                    fixed_selection=fixed)
                 record = result.record
                 record.update(dataset=metadata, provenance=provenance)
                 record["evaluation"] = evaluate_record(record, truth)
+                if args.analyze_first_stage:
+                    from src.first_stage_analysis import analyze_record
+                    record["first_stage_analysis"] = analyze_record(record, truth)
                 if recording_options.get("r5"):
                     record["evaluation_reference"] = json.loads(json.dumps(truth, default=_json_default))
                 records.append(record)
                 if args.export_config:
                     export_windows.append(window)
                 label = f"{run_cfg.initialization_method}/{run_cfg.anchor_selection_strategy}/{run_cfg.pairwise_selection_strategy}/seg={run_cfg.segmentation_enabled}"
+                if run_cfg.bo_epnp_solver != "legacy" or run_cfg.frontend_use_ml_refine is not None:
+                    label += f"/solver={run_cfg.bo_epnp_solver}/ml={run_cfg.frontend_use_ml_refine}"
                 record["method_label"] = label
                 print(f"{path.name} [{start},{stop}) {label} K_A={run_cfg.anchor_budget_per_node} K_P={run_cfg.pairwise_budget_per_node}: {record['status']}", flush=True)
     run_name = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
@@ -319,6 +360,9 @@ def main() -> None:
     save_records(output, records, {**provenance, "config": asdict(cfg), "method_configs": [asdict(c) for c in method_configs], "record_count": len(records),
         "first_stage_cache": "disabled; each recorded run includes actual computation",
         "experiment_wall_seconds": time.perf_counter()-run_started})
+    if args.analyze_first_stage:
+        from src.first_stage_analysis import export_analysis
+        export_analysis(output, records)
     if args.export_config:
         from src.node_gnbp_result_export import export_plot_artifacts
 

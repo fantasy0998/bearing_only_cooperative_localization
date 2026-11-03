@@ -1,0 +1,41 @@
+[
+  {
+    "initialization_method": "bo_epnp",
+    "anchor_selection_strategy": "uniform_time",
+    "bo_epnp_solver": "ls",
+    "frontend_use_ml_refine": false
+  },
+  {
+    "initialization_method": "bo_epnp",
+    "anchor_selection_strategy": "uniform_time",
+    "bo_epnp_solver": "tls",
+    "frontend_use_ml_refine": false
+  },
+  {
+    "initialization_method": "bo_epnp",
+    "anchor_selection_strategy": "legacy_logdet",
+    "bo_epnp_solver": "tls",
+    "frontend_use_ml_refine": false
+  },
+  {
+    "initialization_method": "bo_epnp",
+    "anchor_selection_strategy": "structured_tls_logdet",
+    "bo_epnp_solver": "tls",
+    "frontend_use_ml_refine": false
+  },
+  {
+    "initialization_method": "bo_epnp",
+    "anchor_selection_strategy": "structured_tls_logdet",
+    "bo_epnp_solver": "structured_tls",
+    "frontend_use_ml_refine": false,
+    "structured_tls": {
+      "max_iterations": 50,
+      "step_tolerance": 1e-9,
+      "cost_tolerance": 1e-10,
+      "max_backtracks": 24,
+      "covariance_min_eigenvalue": 1e-20,
+      "covariance_max_condition": 1e12,
+      "rank_rtol": 1e-10
+    }
+  }
+]
