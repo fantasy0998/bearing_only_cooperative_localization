@@ -277,6 +277,11 @@ def _context_title(run: dict) -> str:
 
 def plot_diagnostics(runs: list[dict], config: dict, family: str, issues: list[dict]) -> None:
     """F1/F2 with explicit per-edge panels and actual selection markers."""
+    if (family == "selection" and "r5" in config
+            and config["r5"]["figures"]["stage_selection"]["noise_levels"] == "all"):
+        from analysis.plot_noise_selection import plot_noise_selection
+        plot_noise_selection(runs, config, issues)
+        return
     spec, options = config["figures"][family], config["diagnostics"]
     candidates = [
         r

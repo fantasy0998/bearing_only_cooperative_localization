@@ -203,13 +203,15 @@ def collect(plan_path: Path, *, dry_run: bool = False) -> Path:
                 manifest = read(path.parent / "plot_manifest.json")
                 complete_export = (manifest.get("capabilities", {}).get("r5_additive_export", False)
                                    and all((path.parent / f).is_file() for f in manifest.get("additional_files", {}).values()))
-                reusable = same_code and trace == options.get("trace_selection", False) and complete_export
+                replayed = bool(run.get("selection_replay"))
+                reusable = same_code and trace == options.get("trace_selection", False) and complete_export and not replayed
                 inventory.append({"directory": str(path.parent), "run_id": run["plot_export"]["run_id"],
                     "config_hash": signature(run["config"]), "status": run["status"], "trace": trace,
                     "same_code": same_code, "action": "reuse" if reusable else "version_or_timing_recollection",
-                    "reason": "exact_source_and_trace_protocol" if reusable else "no_verified_cross_version_compatibility",
+                    "reason": ("fixed_selection_not_adaptive" if replayed else
+                               "exact_source_and_trace_protocol" if reusable else "no_verified_cross_version_compatibility"),
                     "source_code_version": run.get("provenance", {}).get("source_sha256", {})})
-                if same_code and complete_export and plan["reuse"]["enabled"]:
+                if same_code and complete_export and plan["reuse"]["enabled"] and not run.get("selection_replay"):
                     existing.append(run)
     write_csv(output / "r3_inventory.csv", inventory)
     dump_json(output / "code_version_compatibility.json", {"cross_version_reuse": False,

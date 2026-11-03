@@ -20,10 +20,12 @@ from analysis.plot_style import configure_style
 from analysis.plot_figures import (
     plot_accuracy_runtime,
     plot_budget,
+    plot_budget_errors,
     plot_diagnostics,
     plot_fixed_budget,
 )
 from analysis.plot_io import dump_json, load_runs, select_nodes, write_csv, write_gallery
+from analysis.r5_config import adapt_plot
 
 
 def merge_config(defaults: dict, override: dict) -> dict:
@@ -77,8 +79,9 @@ def validate_config(config: dict, runs: list[dict]) -> None:
     if d["axes_mode"] not in ("stacked", "twin_y") or m["node_mode"] not in (
         "aggregate",
         "per_node",
+        "both",
     ):
-        raise ValueError("axes_mode must be stacked/twin_y; node_mode aggregate/per_node.")
+        raise ValueError("axes_mode must be stacked/twin_y; node_mode aggregate/per_node/both.")
     if d["max_edges_per_page"] < 1 or m["minimum_boxplot_samples"] < 5 or config["dpi"] < 1:
         raise ValueError("Invalid pagination/DPI; boxplots require at least five logical samples.")
     if not set(config["formats"]) <= {"png", "svg", "pdf"} or not config["formats"]:
@@ -128,6 +131,8 @@ def main() -> None:
             "accuracy_runtime",
             "fixed_budget",
             "budget_selection",
+            "accuracy_budget_methods",
+            "budget_sensitivity",
         ],
     )
     args = parser.parse_args()
@@ -136,11 +141,13 @@ def main() -> None:
         (ROOT / "configs/node_gnbp_plot/plot_node_gnbp.json").read_text(encoding="utf-8")
     )
     ## 按外部文件涉及的配置修改本地配置，不涉及的配置按照默认来
-    config = (
-        merge_config(defaults, json.loads(args.config.read_text(encoding="utf-8")))
-        if args.config
-        else defaults
-    )
+    config = defaults
+    if args.config:
+        raw = json.loads(args.config.read_text(encoding="utf-8"))
+        if raw.get("schema_version") == "plot_config_r5":
+            config = adapt_plot(raw, args.config.resolve(), defaults)
+        else:
+            config = merge_config(defaults, raw)
     ## 读取结果文件位置，输出路径
     if args.results:
         config["results_roots"] = args.results
@@ -191,6 +198,9 @@ def main() -> None:
         ):
             if config["figures"][name]["enabled"]:
                 function(group, config, issues)
+        for family in ("accuracy_budget_methods", "budget_sensitivity"):
+            if config["figures"].get(family, {}).get("enabled", False):
+                plot_budget_errors(group, config, family, issues)
     write_csv(output / "coverage_issues.csv", issues)
     dump_json(
         output / "plot_summary.json",

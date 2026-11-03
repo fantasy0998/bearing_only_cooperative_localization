@@ -1,9 +1,9 @@
 {
   "schema_version": "plot_config_r5",
   "results_roots": [
-    "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\data\\node_gnbp_plot_data\\r5\\20261016T023723_108147Z\\runs"
+    "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\data\\node_gnbp_plot_data\\r5\\20261022T112716_871376Z\\runs"
   ],
-  "output_dir": "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\figures\\node_gnbp\\r5\\20261016T023723_108147Z",
+  "output_dir": "D:\\3-1cooperativeLocalization\\code\\bearing_only_hu\\bearing_only_cooperative_localization\\figures\\node_gnbp\\r5\\20261022T112716_871376Z_noise_comparison",
   "strict": true,
   "graph_ids": "all_separate",
   "figure_order": [
@@ -24,7 +24,7 @@
     "max_edges_per_page": 4,
     "example": {
       "selection": "explicit",
-      "noise_level_id": "noise_1",
+      "noise_level_id": "noise_4",
       "noise_realization_id": "r00",
       "window_start": 0,
       "trial_id": 0,
@@ -43,7 +43,8 @@
     "noise_order": [
       "noise_1",
       "noise_2",
-      "noise_3"
+      "noise_3",
+      "noise_4"
     ],
     "noise_levels": "all",
     "deduplicate_timing_repeats_for_accuracy": true,
@@ -70,6 +71,7 @@
       "show_representatives": false
     },
     "stage_selection": {
+      "noise_levels": "all",
       "id": "F2",
       "enabled": true,
       "source": {

@@ -69,6 +69,7 @@ def adapt_plot(raw: dict, path: Path, defaults: dict) -> dict:
     for name in cfg["figures"]:
         mutable.add(f"figures.{name}.enabled")
     mutable |= {"figures.segmentation.source", "figures.stage_selection.source",
+                "figures.stage_selection.noise_levels",
                 "figures.stage_selection.show_selection_order", "figures.stage_selection.show_score_after",
                 "figures.stage_selection.show_rank", "figures.stage_selection.show_baseline",
                 "figures.stage_selection.annotate_score_values", "figures.stage_selection.score_marker",
@@ -80,6 +81,8 @@ def adapt_plot(raw: dict, path: Path, defaults: dict) -> dict:
                 "figures.budget_sensitivity.error_y_scale", "figures.budget_sensitivity.series_styles",
                 "figures.budget_sensitivity.noise_levels", "figures.budget_sensitivity.show_selection_small_multiples"}
     fixed_policy(cfg, CONTRACTS["plot_node_gnbp_r5.json"], mutable)
+    if cfg["figures"]["stage_selection"]["noise_levels"] not in ("example", "all"):
+        raise ValueError("stage_selection.noise_levels must be example or all")
     if len(cfg["figure_order"]) != 6 or set(cfg["figure_order"]) != {"F1", "F2", "F3a", "F3b", "F4", "F5"}:
         raise ValueError("figure_order must list each r5 family exactly once")
     if any(value <= 0 for value in cfg["metrics"]["log_display_floor"].values()):
